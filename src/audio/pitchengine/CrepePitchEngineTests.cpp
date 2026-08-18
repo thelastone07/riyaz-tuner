@@ -60,6 +60,17 @@ public:
             if (lastDetected.has_value())
                 expectWithinAbsoluteError (*lastDetected, 220.0f, 5.0f); // CREPE bin quantization is ~20 cents (~2.5Hz at 220Hz), 5Hz tolerance is safe
         }
+
+        beginTest ("PitchEngineStatus::InferenceError is a distinct status value");
+        {
+            // Triggering a real Ort::Exception mid-inference isn't deterministic
+            // to reproduce in a unit test, so this simply proves the enumerator
+            // exists and is distinguishable from the other statuses it must not
+            // be confused with: LoadError (permanent, model failed to load) and
+            // Ok (nothing wrong).
+            expect (PitchEngineStatus::InferenceError != PitchEngineStatus::LoadError);
+            expect (PitchEngineStatus::InferenceError != PitchEngineStatus::Ok);
+        }
     }
 };
 

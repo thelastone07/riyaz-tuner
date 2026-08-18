@@ -54,31 +54,43 @@ void CrepePitchEngine::reset()
 
 PitchFrame CrepePitchEngine::runInference (const float* window)
 {
-    Ort::MemoryInfo memoryInfo = Ort::MemoryInfo::CreateCpu (OrtArenaAllocator, OrtMemTypeDefault);
+    try
+    {
+        Ort::MemoryInfo memoryInfo = Ort::MemoryInfo::CreateCpu (OrtArenaAllocator, OrtMemTypeDefault);
 
-    std::array<int64_t, 2> inputShape { 1, kCrepeWindowSize };
-    Ort::Value inputTensor = Ort::Value::CreateTensor<float> (
-        memoryInfo, const_cast<float*> (window), (size_t) kCrepeWindowSize,
-        inputShape.data(), inputShape.size());
+        std::array<int64_t, 2> inputShape { 1, kCrepeWindowSize };
+        Ort::Value inputTensor = Ort::Value::CreateTensor<float> (
+            memoryInfo, const_cast<float*> (window), (size_t) kCrepeWindowSize,
+            inputShape.data(), inputShape.size());
 
-    const char* inputNames[] = { "frames" };
-    const char* outputNames[] = { "probabilities" };
+        const char* inputNames[] = { "frames" };
+        const char* outputNames[] = { "probabilities" };
 
-    auto outputTensors = session->Run (Ort::RunOptions { nullptr },
-                                        inputNames, &inputTensor, 1,
-                                        outputNames, 1);
+        auto outputTensors = session->Run (Ort::RunOptions { nullptr },
+                                            inputNames, &inputTensor, 1,
+                                            outputNames, 1);
 
-    const float* probabilities = outputTensors[0].GetTensorMutableData<float>();
-    auto decoded = decodeCrepeOutput (probabilities, 360);
+        const float* probabilities = outputTensors[0].GetTensorMutableData<float>();
+        auto decoded = decodeCrepeOutput (probabilities, 360);
 
-    PitchFrame frame;
-    frame.timestampMs = (uint64_t) ((double) samplesProcessed / sampleRate * 1000.0);
-    frame.confidence = decoded.confidence;
-    frame.frequencyHz = decoded.confidence >= kMinConfidence
-        ? std::optional<float> (decoded.frequencyHz)
-        : std::nullopt;
+        PitchFrame frame;
+        frame.timestampMs = (uint64_t) ((double) samplesProcessed / sampleRate * 1000.0);
+        frame.confidence = decoded.confidence;
+        frame.frequencyHz = decoded.confidence >= kMinConfidence
+            ? std::optional<float> (decoded.frequencyHz)
+            : std::nullopt;
 
-    return continuityFilter.process (frame);
+        return continuityFilter.process (frame);
+    }
+    catch (const Ort::Exception&)
+    {
+        status = PitchEngineStatus::InferenceError;
+        return PitchFrame {
+            (uint64_t) ((double) samplesProcessed / sampleRate * 1000.0),
+            std::nullopt,
+            0.0f
+        };
+    }
 }
 
 PitchFrame CrepePitchEngine::processFrame (const float* audioFrame, size_t numSamples)

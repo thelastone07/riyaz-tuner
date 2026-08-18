@@ -14,7 +14,8 @@ enum class PitchEngineStatus
 {
     Ok,
     NotPrepared,
-    LoadError
+    LoadError,
+    InferenceError
 };
 
 class PitchEngine

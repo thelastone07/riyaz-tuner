@@ -56,6 +56,8 @@ public:
             mapper.reset();
             auto mandra = mapper.update (-150.0f);
             expect (mandra.octaveRegister == OctaveRegister::Mandra);
+            expectEquals ((int) mandra.swar, (int) Swar::NiKomal);
+            expectEquals (mandra.octaveIndex, -1);
 
             mapper.reset();
             auto taar = mapper.update (1245.0f);
@@ -74,6 +76,17 @@ public:
             auto label = mapper.update (1140.0f); // fresh lock, nearest to 1100 (Ni, madhya)
             expectEquals ((int) label.swar, (int) Swar::Ni);
             expect (label.octaveRegister == OctaveRegister::Madhya);
+        }
+
+        beginTest ("A different hysteresis margin changes the boundary threshold");
+        {
+            SwarMapper mapper (60.0f); // threshold = 50 + 60/2 = 80 cents from center
+            mapper.update (0.0f); // lock to Sa
+            auto stillLocked = mapper.update (70.0f); // 70 < 80, should NOT cross
+            expectEquals ((int) stillLocked.swar, (int) Swar::Sa);
+
+            auto crossed = mapper.update (90.0f); // 90 > 80, should cross
+            expectEquals ((int) crossed.swar, (int) Swar::ReKomal);
         }
 
         beginTest ("swarToString and registerToString produce the expected labels");

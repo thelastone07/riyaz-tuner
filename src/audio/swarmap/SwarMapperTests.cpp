@@ -46,6 +46,35 @@ public:
             expectEquals ((int) label.swar, (int) Swar::MaTivra);
             expectWithinAbsoluteError (label.centsFromCenter, 45.0f, 0.01f);
         }
+
+        beginTest ("Octave register naming for mandra/madhya/taar and numeric fallback");
+        {
+            SwarMapper mapper (15.0f);
+            auto madhya = mapper.update (0.0f);
+            expect (madhya.octaveRegister == OctaveRegister::Madhya);
+
+            mapper.reset();
+            auto mandra = mapper.update (-150.0f);
+            expect (mandra.octaveRegister == OctaveRegister::Mandra);
+
+            mapper.reset();
+            auto taar = mapper.update (1245.0f);
+            expect (taar.octaveRegister == OctaveRegister::Taar);
+
+            mapper.reset();
+            auto farOut = mapper.update (2500.0f);
+            expect (farOut.octaveRegister == OctaveRegister::Other);
+        }
+
+        beginTest ("reset() clears the locked center so the next update re-locks fresh, not treated as a jump");
+        {
+            SwarMapper mapper (15.0f);
+            mapper.update (0.0f); // lock to Sa (madhya)
+            mapper.reset();
+            auto label = mapper.update (1140.0f); // fresh lock, nearest to 1100 (Ni, madhya)
+            expectEquals ((int) label.swar, (int) Swar::Ni);
+            expect (label.octaveRegister == OctaveRegister::Madhya);
+        }
     }
 };
 

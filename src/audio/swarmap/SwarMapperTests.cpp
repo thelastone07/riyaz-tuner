@@ -75,6 +75,15 @@ public:
             expectEquals ((int) label.swar, (int) Swar::Ni);
             expect (label.octaveRegister == OctaveRegister::Madhya);
         }
+
+        beginTest ("swarToString and registerToString produce the expected labels");
+        {
+            expectEquals (swarToString (Swar::Sa), juce::String ("S"));
+            expectEquals (swarToString (Swar::ReKomal), juce::String ("r"));
+            expectEquals (swarToString (Swar::MaTivra), juce::String ("M'"));
+            expectEquals (registerToString (OctaveRegister::Madhya), juce::String ("madhya"));
+            expectEquals (registerToString (OctaveRegister::Other), juce::String ("other"));
+        }
     }
 };
 

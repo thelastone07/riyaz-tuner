@@ -56,6 +56,30 @@ public:
             expect (result.status == CalibrationStatus::Timeout);
             expect (! result.saHz.has_value());
         }
+
+        beginTest ("Confident frames spread across a wide pitch range (unstable singing) report Unstable, not Success");
+        {
+            // Frames confidently detected but spanning ~400 cents (a wide, unstable
+            // range - not the tight jitter of a held note).
+            std::vector<PitchFrame> script;
+            const float freqs[] = { 200.0f, 220.0f, 240.0f, 195.0f, 250.0f,
+                                     205.0f, 235.0f, 210.0f, 245.0f, 200.0f };
+            for (float f : freqs)
+                script.push_back (PitchFrame { 0, f, 0.9f });
+
+            FakePitchEngine engine (script);
+            engine.prepare (44100.0);
+
+            TonicCalibrator calibrator (engine, 44100.0);
+            std::vector<float> block (44100 * 300 / 1000, 0.0f);
+
+            CalibrationResult result { CalibrationStatus::InProgress, std::nullopt };
+            for (int i = 0; i < 10; ++i)
+                result = calibrator.processFrame (block.data(), block.size());
+
+            expect (result.status == CalibrationStatus::Unstable);
+            expect (! result.saHz.has_value());
+        }
     }
 };
 

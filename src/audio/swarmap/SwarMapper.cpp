@@ -49,6 +49,14 @@ SwarLabel SwarMapper::update (float centsFromSa)
         lockedCenterCents = nearestCenterCents (centsFromSa);
         hasLockedCenter = true;
     }
+    else
+    {
+        const float distanceFromLocked = std::abs (centsFromSa - (float) lockedCenterCents);
+        const float threshold = 50.0f + hysteresisMargin / 2.0f;
+
+        if (distanceFromLocked > threshold)
+            lockedCenterCents = nearestCenterCents (centsFromSa);
+    }
 
     return labelForLockedCenter (centsFromSa);
 }

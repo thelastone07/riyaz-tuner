@@ -20,6 +20,8 @@ target_sources(riyaaz_tests PRIVATE
     src/audio/swarmap/SwarMapperTests.cpp
     src/audio/pitchengine/CrepeDecode.cpp
     src/audio/pitchengine/CrepeDecodeTests.cpp
+    src/audio/pitchengine/PitchContinuityFilter.cpp
+    src/audio/pitchengine/PitchContinuityFilterTests.cpp
     src/TestMain.cpp
 )
 target_link_libraries(riyaaz_tests PRIVATE riyaaz_swarmap juce::juce_core)

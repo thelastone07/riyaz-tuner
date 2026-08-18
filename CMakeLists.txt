@@ -26,6 +26,8 @@ target_sources(riyaaz_tests PRIVATE
     src/audio/pitchengine/PitchContinuityFilterTests.cpp
     src/audio/pitchengine/CrepePitchEngine.cpp
     src/audio/pitchengine/CrepePitchEngineTests.cpp
+    src/audio/calibration/TonicCalibrator.cpp
+    src/audio/calibration/TonicCalibratorTests.cpp
     src/TestMain.cpp
 )
 target_link_libraries(riyaaz_tests PRIVATE riyaaz_swarmap juce::juce_core juce::juce_dsp)

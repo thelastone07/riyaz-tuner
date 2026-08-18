@@ -37,6 +37,15 @@ public:
             expectEquals ((int) label.swar, (int) Swar::ReKomal);
             expectWithinAbsoluteError (label.centsFromCenter, -40.0f, 0.01f);
         }
+
+        beginTest ("Large jump snaps directly to the new nearest swar, not stepwise");
+        {
+            SwarMapper mapper (15.0f);
+            mapper.update (0.0f); // lock to Sa
+            auto label = mapper.update (645.0f); // far jump, e.g. silence then a different pitch
+            expectEquals ((int) label.swar, (int) Swar::MaTivra);
+            expectWithinAbsoluteError (label.centsFromCenter, 45.0f, 0.01f);
+        }
     }
 };
 

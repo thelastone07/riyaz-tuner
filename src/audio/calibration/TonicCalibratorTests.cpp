@@ -80,6 +80,54 @@ public:
             expect (result.status == CalibrationStatus::Unstable);
             expect (! result.saHz.has_value());
         }
+
+        beginTest ("Calling processFrame() after the window has closed returns the same final result without re-classifying");
+        {
+            std::vector<PitchFrame> script;
+            for (int i = 0; i < 10; ++i)
+                script.push_back (PitchFrame { 0, 220.0f, 0.9f });
+
+            FakePitchEngine engine (script);
+            engine.prepare (44100.0);
+
+            TonicCalibrator calibrator (engine, 44100.0);
+            std::vector<float> block (44100 * 300 / 1000, 0.0f);
+
+            CalibrationResult result { CalibrationStatus::InProgress, std::nullopt };
+            for (int i = 0; i < 10; ++i)
+                result = calibrator.processFrame (block.data(), block.size());
+            expect (result.status == CalibrationStatus::Success);
+
+            // One more call past the window - must return the SAME result, not
+            // re-run classification on a now-stale confidentFrequencies list.
+            auto again = calibrator.processFrame (block.data(), block.size());
+            expect (again.status == CalibrationStatus::Success);
+            expectWithinAbsoluteError (*again.saHz, *result.saHz, 0.001f);
+        }
+
+        beginTest ("reset() clears state so a fresh calibration window can start");
+        {
+            std::vector<PitchFrame> script;
+            for (int i = 0; i < 10; ++i)
+                script.push_back (PitchFrame { 0, 220.0f, 0.9f });
+
+            FakePitchEngine engine (script);
+            engine.prepare (44100.0);
+
+            TonicCalibrator calibrator (engine, 44100.0);
+            std::vector<float> block (44100 * 300 / 1000, 0.0f);
+
+            for (int i = 0; i < 10; ++i)
+                calibrator.processFrame (block.data(), block.size());
+
+            calibrator.reset();
+            engine.reset();
+
+            // Immediately after reset, a single short frame should NOT have closed
+            // the window yet (elapsedMs should be back to 0).
+            auto result = calibrator.processFrame (block.data(), block.size());
+            expect (result.status == CalibrationStatus::InProgress);
+        }
     }
 };
 

@@ -8,6 +8,25 @@ Deferred, non-blocking items. Not urgent, but shouldn't get silently lost.
 - Source and license-verify ~12 pre-recorded tanpura samples (one per semitone) — **blocking gate before the tanpura milestone starts**, not just a nice-to-have.
 - Verify RVC's `rmvpe.onnx` license terms (RVC lineage is GPL-adjacent) — **blocking gate before v1.1 RMVPE work starts**.
 
+## ONNX Runtime dependency (2026-08-18)
+
+`vcpkg install onnxruntime` fails to build from source on this machine due to a
+known, unresolved upstream MASM assembler bug in ONNX Runtime's hand-written
+AVX kernels (`cvtfp16Avx.asm`, error A2008 on `ymm`/`xmm` operands —
+[microsoft/onnxruntime#23166](https://github.com/microsoft/onnxruntime/issues/23166),
+still open across ORT 1.20-1.23.x on multiple VS2022 toolchains). `onnxruntime`
+was removed from `vcpkg.json` for this reason.
+
+Worked around by vendoring the official prebuilt release instead:
+`third_party/onnxruntime-win-x64-1.23.2/` (downloaded via
+`gh release download v1.23.2 -R microsoft/onnxruntime -p onnxruntime-win-x64-1.23.2.zip`),
+containing `include/onnxruntime_cxx_api.h` and `lib/onnxruntime.{lib,dll}` —
+exactly what `CrepePitchEngine` needs. `third_party/` is gitignored (265MB);
+each machine needs to re-download it. The next plan (PitchEngine +
+CrepePitchEngine) should point CMake at this directory directly
+(`target_include_directories`/`target_link_libraries`) rather than
+`find_package(onnxruntime CONFIG)` via vcpkg, since vcpkg no longer manages it.
+
 ## From SwarMapper final review (2026-08-18, commits a4b4c9a..6615a19)
 
 - Wrap `Swar`, `SwarLabel`, `SwarMapper`, `swarToString`, `registerToString` in `namespace riyaaz` — currently global scope. Cheapest to do now (zero consumers yet); costs a diff across every consumer once the pitch pipeline starts calling into it.

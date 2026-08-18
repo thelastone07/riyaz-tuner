@@ -1,0 +1,8 @@
+{
+  "name": "riyaaz",
+  "version": "0.1.0",
+  "dependencies": [
+    "juce",
+    "onnxruntime"
+  ]
+}

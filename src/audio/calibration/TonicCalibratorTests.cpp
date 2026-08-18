@@ -35,6 +35,27 @@ public:
             if (result.saHz.has_value())
                 expectWithinAbsoluteError (*result.saHz, 220.0f, 1.0f); // median of the jittery values, well within 1Hz
         }
+
+        beginTest ("A window with zero confident frames (user never sings) reports Timeout");
+        {
+            // Script of all-unvoiced frames - simulates silence for the whole window.
+            std::vector<PitchFrame> script;
+            for (int i = 0; i < 10; ++i)
+                script.push_back (PitchFrame { 0, std::nullopt, 0.0f });
+
+            FakePitchEngine engine (script);
+            engine.prepare (44100.0);
+
+            TonicCalibrator calibrator (engine, 44100.0);
+            std::vector<float> block (44100 * 300 / 1000, 0.0f);
+
+            CalibrationResult result { CalibrationStatus::InProgress, std::nullopt };
+            for (int i = 0; i < 10; ++i)
+                result = calibrator.processFrame (block.data(), block.size());
+
+            expect (result.status == CalibrationStatus::Timeout);
+            expect (! result.saHz.has_value());
+        }
     }
 };
 

@@ -90,30 +90,54 @@ def meter_bar(deviation_cents: float, width: int = 21) -> str:
     return "".join(chars)
 
 
-def calibrate_sa() -> float:
-    print(f"\nCalibrating Sa — sing a steady, comfortable note for 3 seconds...")
-    print("(starting in 1 second)")
-    sd.sleep(1000)
-    recording = sd.rec(
-        int(3 * SAMPLE_RATE), samplerate=SAMPLE_RATE, channels=1, dtype="float32"
+def calibrate_sa(max_attempts: int = 5) -> float:
+    default_input = sd.query_devices(sd.default.device[0])
+    print(f"\nRecording from: {default_input['name']}")
+
+    for attempt in range(1, max_attempts + 1):
+        print(f"\nCalibrating Sa (attempt {attempt}/{max_attempts}) — "
+              f"sing a steady, comfortable note for 3 seconds...")
+        print("(starting in 1 second)")
+        sd.sleep(1000)
+        recording = sd.rec(
+            int(3 * SAMPLE_RATE), samplerate=SAMPLE_RATE, channels=1, dtype="float32"
+        )
+        sd.wait()
+        samples = recording[:, 0]
+
+        peak_amplitude = float(np.max(np.abs(samples)))
+        rms = float(np.sqrt(np.mean(samples**2)))
+
+        detections = []
+        best_aperiodicity = 1.0
+        for start in range(0, len(samples) - BLOCK_SIZE, BLOCK_SIZE):
+            block = samples[start : start + BLOCK_SIZE]
+            freq, aperiodicity = yin_pitch(block, SAMPLE_RATE)
+            best_aperiodicity = min(best_aperiodicity, aperiodicity)
+            if freq is not None and aperiodicity < YIN_THRESHOLD:
+                detections.append(freq)
+
+        print(f"  peak amplitude={peak_amplitude:.4f}  rms={rms:.4f}  "
+              f"best aperiodicity={best_aperiodicity:.3f} (need < {YIN_THRESHOLD})")
+
+        if detections:
+            sa_hz = float(np.median(detections))
+            print(f"Sa calibrated: {sa_hz:.1f} Hz (from {len(detections)} confident frames)\n")
+            return sa_hz
+
+        if peak_amplitude < 0.01:
+            print("  -> Signal is near-silent. Mic may be muted, wrong device, "
+                  "or input volume too low in Windows sound settings.")
+        else:
+            print("  -> Signal detected but not periodic enough (best aperiodicity "
+                  f"{best_aperiodicity:.3f} never dropped below {YIN_THRESHOLD}). "
+                  "Try singing louder/steadier, or closer to the mic.")
+
+    raise RuntimeError(
+        f"Couldn't calibrate Sa after {max_attempts} attempts. "
+        "Check the diagnostics above — if peak amplitude stayed near 0, "
+        "the wrong input device is likely selected (see 'Recording from:' above)."
     )
-    sd.wait()
-    samples = recording[:, 0]
-
-    detections = []
-    for start in range(0, len(samples) - BLOCK_SIZE, BLOCK_SIZE):
-        block = samples[start : start + BLOCK_SIZE]
-        freq, aperiodicity = yin_pitch(block, SAMPLE_RATE)
-        if freq is not None and aperiodicity < YIN_THRESHOLD:
-            detections.append(freq)
-
-    if not detections:
-        print("Couldn't detect a stable pitch — check your mic input. Retrying...")
-        return calibrate_sa()
-
-    sa_hz = float(np.median(detections))
-    print(f"Sa calibrated: {sa_hz:.1f} Hz (from {len(detections)} confident frames)\n")
-    return sa_hz
 
 
 def live_feedback_loop(sa_hz: float) -> None:

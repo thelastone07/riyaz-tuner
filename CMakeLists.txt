@@ -6,6 +6,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(JUCE CONFIG REQUIRED)
 
+set(ONNXRUNTIME_ROOT "${CMAKE_SOURCE_DIR}/third_party/onnxruntime-win-x64-1.23.2")
+
 add_library(riyaaz_swarmap STATIC
     src/audio/swarmap/SwarMapper.cpp
 )
@@ -22,6 +24,18 @@ target_sources(riyaaz_tests PRIVATE
     src/audio/pitchengine/CrepeDecodeTests.cpp
     src/audio/pitchengine/PitchContinuityFilter.cpp
     src/audio/pitchengine/PitchContinuityFilterTests.cpp
+    src/audio/pitchengine/CrepePitchEngine.cpp
+    src/audio/pitchengine/CrepePitchEngineTests.cpp
     src/TestMain.cpp
 )
 target_link_libraries(riyaaz_tests PRIVATE riyaaz_swarmap juce::juce_core)
+
+target_include_directories(riyaaz_tests PRIVATE "${ONNXRUNTIME_ROOT}/include")
+target_link_libraries(riyaaz_tests PRIVATE "${ONNXRUNTIME_ROOT}/lib/onnxruntime.lib")
+
+# Copy the runtime DLL next to the built test executable so it can actually launch:
+add_custom_command(TARGET riyaaz_tests POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${ONNXRUNTIME_ROOT}/lib/onnxruntime.dll"
+        "$<TARGET_FILE_DIR:riyaaz_tests>"
+)

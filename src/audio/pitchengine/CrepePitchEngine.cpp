@@ -80,6 +80,7 @@ PitchFrame CrepePitchEngine::runInference (const float* window)
             ? std::optional<float> (decoded.frequencyHz)
             : std::nullopt;
 
+        status = PitchEngineStatus::Ok;
         return continuityFilter.process (frame);
     }
     catch (const Ort::Exception&)
@@ -98,7 +99,7 @@ PitchFrame CrepePitchEngine::processFrame (const float* audioFrame, size_t numSa
     const uint64_t frameTimestamp = (uint64_t) ((double) samplesProcessed / sampleRate * 1000.0);
     samplesProcessed += numSamples;
 
-    if (status != PitchEngineStatus::Ok)
+    if (status == PitchEngineStatus::NotPrepared || status == PitchEngineStatus::LoadError)
         return PitchFrame { frameTimestamp, std::nullopt, 0.0f };
 
     // LagrangeInterpolator::process() is output-driven: you tell it how many

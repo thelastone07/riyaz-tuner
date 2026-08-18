@@ -59,6 +59,17 @@ public:
             expect (lastDetected.has_value());
             if (lastDetected.has_value())
                 expectWithinAbsoluteError (*lastDetected, 220.0f, 5.0f); // CREPE bin quantization is ~20 cents (~2.5Hz at 220Hz), 5Hz tolerance is safe
+
+            // The success path in runInference() explicitly sets status = Ok on
+            // every successful inference. This is what allows recovery from a
+            // prior transient InferenceError: as long as inference keeps
+            // succeeding, status stays (or becomes) Ok rather than getting stuck.
+            // We can't deterministically force a real Ort::Exception here (no
+            // ONNX-session mocking seam), so this only confirms the success path
+            // itself lands on Ok — the guard-logic half of the recovery fix
+            // (processFrame() no longer permanently blocking on InferenceError)
+            // is verified by code inspection, not by this test.
+            expect (engine.getStatus() == PitchEngineStatus::Ok);
         }
 
         beginTest ("PitchEngineStatus::InferenceError is a distinct status value");

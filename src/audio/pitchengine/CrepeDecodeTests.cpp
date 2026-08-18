@@ -55,6 +55,20 @@ public:
             const float freq1 = 10.0f * std::pow (2.0f, (20.0f + 1997.3794084376191f) / 1200.0f);
             expect (result.frequencyHz >= freq0 && result.frequencyHz <= freq1);
         }
+
+        beginTest ("numBins <= 0 returns a safe default without reading probabilities[0]");
+        {
+            // Passing nullptr proves the guard returns before any dereference —
+            // if the numBins <= 0 check were missing, probabilities[0] here
+            // would be a null-pointer read.
+            auto resultZero = decodeCrepeOutput (nullptr, 0);
+            expect (resultZero.frequencyHz == 0.0f);
+            expect (resultZero.confidence == 0.0f);
+
+            auto resultNegative = decodeCrepeOutput (nullptr, -1);
+            expect (resultNegative.frequencyHz == 0.0f);
+            expect (resultNegative.confidence == 0.0f);
+        }
     }
 };
 

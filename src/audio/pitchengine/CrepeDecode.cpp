@@ -15,6 +15,9 @@ namespace
 
 CrepeDecodeResult decodeCrepeOutput (const float* probabilities, int numBins)
 {
+    if (numBins <= 0)
+        return { 0.0f, 0.0f }; // no bins to read — safe default (silence/no confidence)
+
     int argmaxBin = 0;
     float maxVal = probabilities[0];
     for (int i = 1; i < numBins; ++i)

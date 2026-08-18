@@ -8,11 +8,26 @@ CrepePitchEngine::CrepePitchEngine (juce::String modelPathIn)
 
 PitchEngineStatus CrepePitchEngine::prepare (double inputSampleRate)
 {
+    // ONNX Runtime requires the Env to outlive every Session created from it.
+    // Reset in this order (Session first, then Env) unconditionally, every
+    // time prepare() is called (including the first, where both are already
+    // null and this is a no-op), so a second prepare() call never destroys
+    // the Env while the old Session is still alive.
+    session.reset();
+    env.reset();
+
     sampleRate = inputSampleRate;
     samplesProcessed = 0;
     resampledBuffer.clear();
     resampler.reset();
     continuityFilter.reset();
+
+    if (sampleRate <= 0.0)
+    {
+        status = PitchEngineStatus::LoadError;
+        return status;
+    }
+
     resampleSpeedRatio = sampleRate / kCrepeSampleRate; // input samples consumed per output sample
 
     juce::File modelFile (modelPath);
@@ -40,6 +55,12 @@ PitchEngineStatus CrepePitchEngine::prepare (double inputSampleRate)
         env.reset();
         status = PitchEngineStatus::LoadError;
     }
+    catch (const std::exception&)
+    {
+        session.reset();
+        env.reset();
+        status = PitchEngineStatus::LoadError;
+    }
 
     return status;
 }
@@ -54,6 +75,15 @@ void CrepePitchEngine::reset()
 
 PitchFrame CrepePitchEngine::runInference (const float* window)
 {
+    const uint64_t frameTimestamp = sampleRate > 0.0
+        ? (uint64_t) ((double) samplesProcessed / sampleRate * 1000.0)
+        : 0;
+
+    // The try block wraps only the ONNX-specific work: tensor construction,
+    // session->Run, reading/validating the output tensor, and decoding it.
+    // Nothing outside this block can throw an Ort::Exception, so status/
+    // continuityFilter handling lives outside it (see below).
+    CrepeDecodeResult decoded {};
     try
     {
         Ort::MemoryInfo memoryInfo = Ort::MemoryInfo::CreateCpu (OrtArenaAllocator, OrtMemTypeDefault);
@@ -70,33 +100,43 @@ PitchFrame CrepePitchEngine::runInference (const float* window)
                                             inputNames, &inputTensor, 1,
                                             outputNames, 1);
 
+        const size_t elementCount = outputTensors[0].GetTensorTypeAndShapeInfo().GetElementCount();
+        if (elementCount != 360)
+        {
+            status = PitchEngineStatus::InferenceError;
+            return PitchFrame { frameTimestamp, std::nullopt, 0.0f };
+        }
+
         const float* probabilities = outputTensors[0].GetTensorMutableData<float>();
-        auto decoded = decodeCrepeOutput (probabilities, 360);
-
-        PitchFrame frame;
-        frame.timestampMs = (uint64_t) ((double) samplesProcessed / sampleRate * 1000.0);
-        frame.confidence = decoded.confidence;
-        frame.frequencyHz = decoded.confidence >= kMinConfidence
-            ? std::optional<float> (decoded.frequencyHz)
-            : std::nullopt;
-
-        status = PitchEngineStatus::Ok;
-        return continuityFilter.process (frame);
+        decoded = decodeCrepeOutput (probabilities, 360);
     }
     catch (const Ort::Exception&)
     {
         status = PitchEngineStatus::InferenceError;
-        return PitchFrame {
-            (uint64_t) ((double) samplesProcessed / sampleRate * 1000.0),
-            std::nullopt,
-            0.0f
-        };
+        return PitchFrame { frameTimestamp, std::nullopt, 0.0f };
     }
+    catch (const std::exception&)
+    {
+        status = PitchEngineStatus::InferenceError;
+        return PitchFrame { frameTimestamp, std::nullopt, 0.0f };
+    }
+
+    PitchFrame frame;
+    frame.timestampMs = frameTimestamp;
+    frame.confidence = decoded.confidence;
+    frame.frequencyHz = decoded.confidence >= kMinConfidence
+        ? std::optional<float> (decoded.frequencyHz)
+        : std::nullopt;
+
+    status = PitchEngineStatus::Ok;
+    return continuityFilter.process (frame);
 }
 
 PitchFrame CrepePitchEngine::processFrame (const float* audioFrame, size_t numSamples)
 {
-    const uint64_t frameTimestamp = (uint64_t) ((double) samplesProcessed / sampleRate * 1000.0);
+    const uint64_t frameTimestamp = sampleRate > 0.0
+        ? (uint64_t) ((double) samplesProcessed / sampleRate * 1000.0)
+        : 0;
     samplesProcessed += numSamples;
 
     if (status == PitchEngineStatus::NotPrepared || status == PitchEngineStatus::LoadError)

@@ -72,6 +72,60 @@ public:
             expect (engine.getStatus() == PitchEngineStatus::Ok);
         }
 
+        beginTest ("prepare() called twice in a row still works correctly");
+        {
+            CrepePitchEngine engine (juce::String ("models/crepe/small.onnx"));
+            auto firstPrepare = engine.prepare (16000.0);
+            expect (firstPrepare == PitchEngineStatus::Ok);
+
+            // Calling prepare() again must not use-after-free the ONNX Runtime
+            // Env/Session (the first prepare()'s Session must be torn down
+            // before its Env is), and the engine must remain fully usable.
+            auto secondPrepare = engine.prepare (16000.0);
+            expect (secondPrepare == PitchEngineStatus::Ok);
+            expect (engine.getStatus() == PitchEngineStatus::Ok);
+
+            constexpr double sr = 16000.0;
+            constexpr float freq = 220.0f;
+            std::vector<float> sine (16000);
+            for (size_t i = 0; i < sine.size(); ++i)
+                sine[i] = std::sin (2.0 * juce::MathConstants<double>::pi * freq * (double) i / sr) * 0.5f;
+
+            std::optional<float> lastDetected;
+            for (size_t offset = 0; offset + 1024 <= sine.size(); offset += 1024)
+            {
+                auto frame = engine.processFrame (sine.data() + offset, 1024);
+                if (frame.frequencyHz.has_value() && frame.confidence > 0.5f)
+                    lastDetected = frame.frequencyHz;
+            }
+
+            expect (lastDetected.has_value());
+            if (lastDetected.has_value())
+                expectWithinAbsoluteError (*lastDetected, 220.0f, 5.0f);
+        }
+
+        beginTest ("prepare() with sampleRate <= 0 returns LoadError, not UB");
+        {
+            CrepePitchEngine engineZero (juce::String ("models/crepe/small.onnx"));
+            auto zeroStatus = engineZero.prepare (0.0);
+            expect (zeroStatus == PitchEngineStatus::LoadError);
+            expect (engineZero.getStatus() == PitchEngineStatus::LoadError);
+
+            CrepePitchEngine engineNegative (juce::String ("models/crepe/small.onnx"));
+            auto negativeStatus = engineNegative.prepare (-44100.0);
+            expect (negativeStatus == PitchEngineStatus::LoadError);
+            expect (engineNegative.getStatus() == PitchEngineStatus::LoadError);
+        }
+
+        beginTest ("processFrame() before prepare() returns timestampMs == 0, not garbage from a NaN cast");
+        {
+            CrepePitchEngine engine (juce::String ("models/crepe/small.onnx"));
+            // prepare() deliberately NOT called, so sampleRate is still 0.0.
+            std::vector<float> silence (1024, 0.0f);
+            auto frame = engine.processFrame (silence.data(), silence.size());
+            expect (frame.timestampMs == 0);
+        }
+
         beginTest ("PitchEngineStatus::InferenceError is a distinct status value");
         {
             // Triggering a real Ort::Exception mid-inference isn't deterministic

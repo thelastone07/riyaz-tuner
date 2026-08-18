@@ -27,6 +27,80 @@ CrepePitchEngine) should point CMake at this directory directly
 (`target_include_directories`/`target_link_libraries`) rather than
 `find_package(onnxruntime CONFIG)` via vcpkg, since vcpkg no longer manages it.
 
+## From PitchEngine final review (2026-08-18, commits 68de234..ea21b1f) — for the next plan (real-time audio wiring)
+
+These are structural, not bugs on the path today's tests cover — but they need
+to be design inputs for the next plan (wiring `CrepePitchEngine` behind
+`juce::AbstractFifo` + a worker thread), not rediscovered mid-implementation.
+
+- **`processFrame()`'s one-result-per-call shape can't keep up with large blocks.**
+  `resampledBuffer` fills from resampled input but only drains one 1024-sample
+  window per call. At 44.1kHz with a 4096-sample block (a normal, selectable
+  audio buffer size), each call produces ~1486 resampled samples but only
+  consumes 1024 — the buffer grows ~462 samples/call, unboundedly, with no
+  error signal. Fix direction: either loop internally (`while
+  (resampledBuffer.size() >= 1024) { ...keep most recent result... }`) or cap
+  buffer size and report an overflow status. Needs a decision on which frame
+  to report when a block yields multiple windows.
+- **Timestamps lag the audio they describe by up to ~75ms, and the lag varies
+  frame to frame.** The analyzed window is drawn from the front of
+  `resampledBuffer`, which carries 0-1200 samples of residue in steady state —
+  so `timestampMs` claims a time up to 75ms newer than the actual audio being
+  analyzed. Will show up as jitter in a live pitch graph. Fix by deriving the
+  timestamp from the window's own start position, not `samplesProcessed` at
+  call time.
+- **`CrepePitchEngine::status` needs to become `std::atomic<PitchEngineStatus>`
+  before `processFrame()` moves to a worker thread.** Currently written on
+  every inference and read by `getStatus()` (intended for UI polling) with no
+  synchronization — harmless single-threaded today, a data race the moment
+  the real-time wiring plan lands.
+- **`PitchContinuityFilter`'s octave-correction heuristic will fight a real
+  Sa→upper-Sa leap** (a staple sargam/aakar exercise, and `SwarMapper` already
+  has `OctaveRegister {Mandra, Madhya, Taar}` as a first-class, user-visible
+  concept). The filter can't currently distinguish "CREPE glitched for one
+  frame" from "the singer deliberately jumped an octave" — both land within
+  50 cents of an exact 1200-cent multiple. Worse, unvoiced frames don't reset
+  the reference, so "sing Sa, pause, sing upper Sa" is also mis-corrected, and
+  because the *corrected* value gets written back as the new reference, the
+  engine stays stuck an octave low until `reset()`. **This is a design
+  decision, not a bug** — what actually distinguishes a glitch from a leap is
+  persistence (a CREPE error lasts one frame and reverts; a real leap holds).
+  Needs a decision before the next plan: replace the stateless single-frame
+  rule with either (a) a one-frame-outlier check (only correct if the
+  following frame returns near the pre-jump reference), or (b) expire the
+  reference after ~200ms of unvoiced/silence. Flagging for you rather than
+  picking unilaterally, since it changes what "octave accuracy" scoring
+  (section 4.3 of the original plan) will actually measure.
+- **CMake structure**: pitch-engine sources compile directly into `riyaaz_tests`
+  only — there's no `riyaaz_pitchengine` library target the way `riyaaz_swarmap`
+  exists for the swar-mapping module. The ONNX include dirs, `.lib`, and
+  DLL-copy step are all attached to `riyaaz_tests` alone. The next plan's
+  first task should extract a proper library target (propagating ONNX
+  include/link `PUBLIC`) before an actual app target needs the same wiring
+  duplicated.
+- **Test gap**: all 26 current tests either avoid the resampler entirely (feed
+  16kHz-native audio) or use a single fixed 1024-sample block size — the
+  resampling and variable-block-size buffering paths are effectively
+  untested. Cheapest high-value addition: a 44.1kHz test feeding the same
+  220Hz sine in irregular block sizes (e.g. cycling 128/512/300/1024) and
+  asserting both correct detection and bounded `resampledBuffer` growth.
+- Minor: `decodeCrepeOutput`'s `numBins<=0` guard and the output-tensor
+  element-count check are both now in place, but neither is covered by a test
+  that would catch a *real* ONNX Runtime failure mode (only synthetic/null
+  inputs) — acceptable given there's no session-mocking seam, noted for
+  awareness.
+- Minor: each `CrepePitchEngine` instance owns its own `Ort::Env`; ONNX Runtime
+  intends `Env` as a per-process singleton. Harmless with one engine instance
+  (today); make it a shared static before a second engine (e.g. an RMVPE A/B
+  comparison instance, per the original plan's v1.1 milestone) ever coexists.
+- Product note: non-overlapping 1024-sample windows at 16kHz give a 64ms hop
+  (15.6 pitch estimates/second) — reference CREPE usage is typically a 10ms
+  hop with overlapping windows. Hindustani ornaments (murki, khatka) live in
+  the 50-150ms range and will get smeared at 64ms. The non-overlapping choice
+  was deliberate for v1 simplicity (the current buffer-erase design can't
+  retain window history for overlap), but hop size should be treated as a
+  tunable the next plan can revisit, not a fixed constant.
+
 ## From SwarMapper final review (2026-08-18, commits a4b4c9a..6615a19)
 
 - Wrap `Swar`, `SwarLabel`, `SwarMapper`, `swarToString`, `registerToString` in `namespace riyaaz` — currently global scope. Cheapest to do now (zero consumers yet); costs a diff across every consumer once the pitch pipeline starts calling into it.

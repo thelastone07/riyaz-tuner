@@ -18,6 +18,8 @@ target_compile_definitions(riyaaz_swarmap PUBLIC
 juce_add_console_app(riyaaz_tests PRODUCT_NAME "Riyaaz Tests")
 target_sources(riyaaz_tests PRIVATE
     src/audio/swarmap/SwarMapperTests.cpp
+    src/audio/pitchengine/CrepeDecode.cpp
+    src/audio/pitchengine/CrepeDecodeTests.cpp
     src/TestMain.cpp
 )
 target_link_libraries(riyaaz_tests PRIVATE riyaaz_swarmap juce::juce_core)

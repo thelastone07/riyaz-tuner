@@ -5,3 +5,4 @@ vcpkg-install.log
 __pycache__/
 *.pyc
 third_party/
+models/

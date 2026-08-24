@@ -179,5 +179,5 @@ PitchFrame CrepePitchEngine::processFrame (const float* audioFrame, size_t numSa
 
 PitchEngineStatus CrepePitchEngine::getStatus() const
 {
-    return status;
+    return status.load();
 }

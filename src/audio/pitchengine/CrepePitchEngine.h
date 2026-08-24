@@ -4,6 +4,7 @@
 #include <juce_core/juce_core.h>
 #include <juce_dsp/juce_dsp.h>
 #include <onnxruntime_cxx_api.h>
+#include <atomic>
 #include <memory>
 #include <vector>
 
@@ -23,7 +24,11 @@ private:
     static constexpr float kMinConfidence = 0.5f;
 
     juce::String modelPath;
-    PitchEngineStatus status = PitchEngineStatus::NotPrepared;
+    // Written from whichever thread calls processFrame()/prepare(), read from
+    // getStatus() which is intended to be polled from a UI thread once this
+    // engine runs behind a worker thread - must be atomic to avoid a data
+    // race the moment that wiring exists.
+    std::atomic<PitchEngineStatus> status { PitchEngineStatus::NotPrepared };
     double sampleRate = 0.0;
     uint64_t resampledSamplesConsumed = 0; // running count of 16kHz-domain samples consumed by inference so far
 

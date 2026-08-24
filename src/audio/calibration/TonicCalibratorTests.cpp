@@ -130,6 +130,86 @@ public:
             expect (result.status == CalibrationStatus::InProgress);
         }
 
+        beginTest ("A mixed window with confident frames under 50% of total calls reports Timeout, not Success");
+        {
+            // 2 confident frames out of 10 total calls (20% ratio) - non-zero
+            // confident frequencies exist, but there isn't enough signal to
+            // trust them as a calibration (Fix 1: minimum voiced-frame ratio).
+            std::vector<PitchFrame> script;
+            script.push_back (PitchFrame { 0, 220.0f, 0.9f });
+            script.push_back (PitchFrame { 0, std::nullopt, 0.0f });
+            script.push_back (PitchFrame { 0, std::nullopt, 0.0f });
+            script.push_back (PitchFrame { 0, std::nullopt, 0.0f });
+            script.push_back (PitchFrame { 0, 221.0f, 0.9f });
+            script.push_back (PitchFrame { 0, std::nullopt, 0.0f });
+            script.push_back (PitchFrame { 0, std::nullopt, 0.0f });
+            script.push_back (PitchFrame { 0, std::nullopt, 0.0f });
+            script.push_back (PitchFrame { 0, std::nullopt, 0.0f });
+            script.push_back (PitchFrame { 0, std::nullopt, 0.0f });
+
+            FakePitchEngine engine (script);
+            engine.prepare (44100.0);
+
+            TonicCalibrator calibrator (engine, 44100.0);
+            std::vector<float> block (44100 * 300 / 1000, 0.0f);
+
+            CalibrationResult result { CalibrationStatus::InProgress, std::nullopt };
+            for (int i = 0; i < 10; ++i)
+                result = calibrator.processFrame (block.data(), block.size());
+
+            expect (result.status == CalibrationStatus::Timeout);
+            expect (! result.saHz.has_value());
+        }
+
+        beginTest ("reset() resets the injected engine, clearing any stale continuity-filter state before a retry");
+        {
+            std::vector<PitchFrame> script;
+            for (int i = 0; i < 5; ++i)
+                script.push_back (PitchFrame { 0, 220.0f, 0.9f });
+
+            FakePitchEngine engine (script);
+            engine.prepare (44100.0);
+            expect (! engine.wasReset);
+
+            TonicCalibrator calibrator (engine, 44100.0);
+            std::vector<float> block (44100 * 300 / 1000, 0.0f);
+            for (int i = 0; i < 3; ++i)
+                calibrator.processFrame (block.data(), block.size());
+
+            calibrator.reset();
+
+            expect (engine.wasReset);
+        }
+
+        beginTest ("A single outlier frame among tightly-clustered frames reports Success (percentile-based instability gate), not Unstable");
+        {
+            // 9 frames at exactly 220Hz plus 1 outlier at 250Hz. Old min/max
+            // based spread: 1200*log2(250/220) =~ 221 cents from the median -
+            // would have failed as Unstable. New 5th/95th percentile spread
+            // excludes that single outlier (with 10 sorted values, p5Index=0
+            // and p95Index=8, both landing on 220Hz values), so the computed
+            // spread is 0 cents and calibration succeeds (Fix 4).
+            std::vector<PitchFrame> script;
+            for (int i = 0; i < 9; ++i)
+                script.push_back (PitchFrame { 0, 220.0f, 0.9f });
+            script.push_back (PitchFrame { 0, 250.0f, 0.9f });
+
+            FakePitchEngine engine (script);
+            engine.prepare (44100.0);
+
+            TonicCalibrator calibrator (engine, 44100.0);
+            std::vector<float> block (44100 * 300 / 1000, 0.0f);
+
+            CalibrationResult result { CalibrationStatus::InProgress, std::nullopt };
+            for (int i = 0; i < 10; ++i)
+                result = calibrator.processFrame (block.data(), block.size());
+
+            expect (result.status == CalibrationStatus::Success);
+            expect (result.saHz.has_value());
+            if (result.saHz.has_value())
+                expectWithinAbsoluteError (*result.saHz, 220.0f, 0.001f);
+        }
+
         beginTest ("End-to-end: a real 220Hz sine through CrepePitchEngine calibrates to ~220Hz Sa");
         {
             CrepePitchEngine engine (juce::String ("models/crepe/small.onnx"));

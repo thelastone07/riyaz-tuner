@@ -23,6 +23,7 @@ public:
     void reset() override
     {
         nextIndex = 0;
+        wasReset = true;
     }
 
     PitchFrame processFrame (const float*, size_t) override
@@ -37,6 +38,8 @@ public:
     }
 
     PitchEngineStatus getStatus() const override { return status; }
+
+    bool wasReset = false;
 
 private:
     std::vector<PitchFrame> script;

@@ -34,6 +34,14 @@ public:
     // Processes one block of raw input-rate audio samples. May internally
     // buffer partial windows and return frequencyHz = nullopt if not enough
     // samples have accumulated yet for an inference.
+    //
+    // Confidence contract: implementations are expected to populate
+    // frequencyHz (i.e. return non-nullopt) only when they consider the
+    // reading confident/voiced. Callers may therefore treat any non-nullopt
+    // frequencyHz as usable on its own, without a separate confidence check.
+    // The confidence field remains available on PitchFrame for
+    // implementations/callers that want finer-grained information beyond
+    // this pass/fail signal.
     virtual PitchFrame processFrame (const float* audioFrame, size_t numSamples) = 0;
 
     virtual PitchEngineStatus getStatus() const = 0;

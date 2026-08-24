@@ -32,6 +32,8 @@ private:
     uint64_t windowMs;
 
     uint64_t elapsedMs = 0;
+    uint64_t samplesSeen = 0;
+    int totalFramesInWindow = 0;
     std::vector<float> confidentFrequencies;
     CalibrationResult finalResult { CalibrationStatus::InProgress, std::nullopt };
 };

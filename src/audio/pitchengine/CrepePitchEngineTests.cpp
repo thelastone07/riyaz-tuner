@@ -136,6 +136,45 @@ public:
             expect (PitchEngineStatus::InferenceError != PitchEngineStatus::LoadError);
             expect (PitchEngineStatus::InferenceError != PitchEngineStatus::Ok);
         }
+
+        beginTest ("A single large block spanning multiple windows drains all of them and returns only the latest result");
+        {
+            CrepePitchEngine engine (juce::String ("models/crepe/small.onnx"));
+            auto prepareStatus = engine.prepare (16000.0);
+            expect (prepareStatus == PitchEngineStatus::Ok);
+
+            // 4096 samples = exactly 4 windows at 16kHz native rate (no resampling).
+            // First 3072 samples (3 windows) are silence; last 1024 (the 4th window)
+            // is a clean 220Hz tone. The OLD one-window-per-call code would only
+            // consume the first 1024 samples on this call (silence -> unvoiced) and
+            // leave the rest buffered for a future call it might never receive. The
+            // fixed code must drain all 4 windows in this one call and return the
+            // 4th window's result.
+            constexpr double sr = 16000.0;
+            constexpr float freq = 220.0f;
+            std::vector<float> block (4096, 0.0f);
+            for (size_t i = 3072; i < block.size(); ++i)
+                block[i] = std::sin (2.0 * juce::MathConstants<double>::pi * freq * (double) (i - 3072) / sr) * 0.5f;
+
+            auto frame = engine.processFrame (block.data(), block.size());
+
+            expect (frame.frequencyHz.has_value());
+            if (frame.frequencyHz.has_value())
+                expectWithinAbsoluteError (*frame.frequencyHz, 220.0f, 5.0f);
+        }
+
+        beginTest ("Timestamps advance in fixed 64ms increments per window, independent of call granularity");
+        {
+            CrepePitchEngine engine (juce::String ("models/crepe/small.onnx"));
+            engine.prepare (16000.0);
+
+            std::vector<float> silence (1024, 0.0f);
+            auto first = engine.processFrame (silence.data(), silence.size());
+            auto second = engine.processFrame (silence.data(), silence.size());
+
+            expectEquals ((long long) first.timestampMs, (long long) 0);
+            expectEquals ((long long) second.timestampMs, (long long) 64); // 1024/16000*1000
+        }
     }
 };
 

@@ -25,7 +25,7 @@ private:
     juce::String modelPath;
     PitchEngineStatus status = PitchEngineStatus::NotPrepared;
     double sampleRate = 0.0;
-    uint64_t samplesProcessed = 0;
+    uint64_t resampledSamplesConsumed = 0; // running count of 16kHz-domain samples consumed by inference so far
 
     std::unique_ptr<Ort::Env> env;
     std::unique_ptr<Ort::Session> session;

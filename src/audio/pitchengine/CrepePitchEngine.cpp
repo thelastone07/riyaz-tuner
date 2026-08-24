@@ -17,7 +17,7 @@ PitchEngineStatus CrepePitchEngine::prepare (double inputSampleRate)
     env.reset();
 
     sampleRate = inputSampleRate;
-    samplesProcessed = 0;
+    resampledSamplesConsumed = 0;
     resampledBuffer.clear();
     resampler.reset();
     continuityFilter.reset();
@@ -67,7 +67,7 @@ PitchEngineStatus CrepePitchEngine::prepare (double inputSampleRate)
 
 void CrepePitchEngine::reset()
 {
-    samplesProcessed = 0;
+    resampledSamplesConsumed = 0;
     resampledBuffer.clear();
     resampler.reset();
     continuityFilter.reset();
@@ -75,9 +75,12 @@ void CrepePitchEngine::reset()
 
 PitchFrame CrepePitchEngine::runInference (const float* window)
 {
-    const uint64_t frameTimestamp = sampleRate > 0.0
-        ? (uint64_t) ((double) samplesProcessed / sampleRate * 1000.0)
-        : 0;
+    // Timestamp reflects the START of the window being analyzed, in terms of
+    // resampled (16kHz-domain) audio time - not wall-clock call time. This
+    // advances in fixed kCrepeWindowSize/kCrepeSampleRate steps regardless of
+    // caller block size or how many windows one processFrame() call drains.
+    const uint64_t frameTimestamp = (uint64_t) ((double) resampledSamplesConsumed / kCrepeSampleRate * 1000.0);
+    resampledSamplesConsumed += (uint64_t) kCrepeWindowSize;
 
     // The try block wraps only the ONNX-specific work: tensor construction,
     // session->Run, reading/validating the output tensor, and decoding it.
@@ -134,20 +137,11 @@ PitchFrame CrepePitchEngine::runInference (const float* window)
 
 PitchFrame CrepePitchEngine::processFrame (const float* audioFrame, size_t numSamples)
 {
-    const uint64_t frameTimestamp = sampleRate > 0.0
-        ? (uint64_t) ((double) samplesProcessed / sampleRate * 1000.0)
-        : 0;
-    samplesProcessed += numSamples;
+    const uint64_t fallbackTimestamp = (uint64_t) ((double) resampledSamplesConsumed / kCrepeSampleRate * 1000.0);
 
     if (status == PitchEngineStatus::NotPrepared || status == PitchEngineStatus::LoadError)
-        return PitchFrame { frameTimestamp, std::nullopt, 0.0f };
+        return PitchFrame { fallbackTimestamp, std::nullopt, 0.0f };
 
-    // LagrangeInterpolator::process() is output-driven: you tell it how many
-    // OUTPUT samples you want, not how many input samples you're feeding it.
-    // Use the 6-argument overload with an explicit numInputSamplesAvailable
-    // so it zero-pads instead of reading past the end of audioFrame if the
-    // conservative floor() below ever asks for slightly more than is truly
-    // available (verified against JUCE 8.0.7's juce_GenericInterpolator.h).
     const int maxOutputSamples = (int) ((double) numSamples / resampleSpeedRatio);
     if (maxOutputSamples > 0)
     {
@@ -159,12 +153,22 @@ PitchFrame CrepePitchEngine::processFrame (const float* audioFrame, size_t numSa
                                  resampleScratch.begin(), resampleScratch.begin() + maxOutputSamples);
     }
 
-    if ((int) resampledBuffer.size() < kCrepeWindowSize)
-        return PitchFrame { frameTimestamp, std::nullopt, 0.0f };
+    // Drain every complete window this call's audio makes available, keeping
+    // only the LATEST result. A live display only cares about the current
+    // pitch - returning a stale first-of-several-windows result here would
+    // reintroduce the lag this fix exists to remove, and never fully
+    // draining would let resampledBuffer grow without bound on large blocks.
+    PitchFrame result { fallbackTimestamp, std::nullopt, 0.0f };
+    bool producedResult = false;
 
-    PitchFrame result = runInference (resampledBuffer.data());
-    resampledBuffer.erase (resampledBuffer.begin(), resampledBuffer.begin() + kCrepeWindowSize);
-    return result;
+    while ((int) resampledBuffer.size() >= kCrepeWindowSize)
+    {
+        result = runInference (resampledBuffer.data());
+        resampledBuffer.erase (resampledBuffer.begin(), resampledBuffer.begin() + kCrepeWindowSize);
+        producedResult = true;
+    }
+
+    return producedResult ? result : PitchFrame { fallbackTimestamp, std::nullopt, 0.0f };
 }
 
 PitchEngineStatus CrepePitchEngine::getStatus() const

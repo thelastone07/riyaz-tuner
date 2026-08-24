@@ -2,6 +2,23 @@
 
 Deferred, non-blocking items. Not urgent, but shouldn't get silently lost.
 
+## From PitchPipeline plan, Task 2 review (2026-08-18, commit 9117332)
+
+- `CrepePitchEngine::processFrame()`'s resample step truncates the fractional
+  output sample every call (`(int)((double) numSamples / resampleSpeedRatio)`)
+  and JUCE's `LagrangeInterpolator` doesn't carry the dropped input forward
+  across calls — each call gets a fresh `audioFrame` pointer, so the leftover
+  audio is silently discarded. At 44.1kHz with a 512-sample block this drops
+  ~0.76 samples/call (~0.4% timestamp drift, ~2.4s over a 10-minute session);
+  any block size not evenly divisible by `resampleSpeedRatio` drifts similarly.
+  All current tests run at 16kHz native rate (ratio 1.0, zero drift), so
+  nothing catches this. Pre-dates this plan (inherited from the original
+  PitchEngine plan's resampler code) but this plan's timestamp fix makes the
+  drift load-bearing for the first time — worth a proper fix (accumulate the
+  fractional remainder across calls) plus a 44.1kHz test with irregular block
+  sizes before this is trusted as ground truth for anything timing-sensitive
+  (e.g. a live pitch graph's x-axis).
+
 ## From TonicCalibrator final review (2026-08-18, commits 8fb195f..01ad60f)
 
 - `TonicCalibrator`'s `minConfidentReadings` constructor parameter has no defensive

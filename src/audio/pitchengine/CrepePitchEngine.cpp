@@ -146,6 +146,12 @@ PitchFrame CrepePitchEngine::processFrame (const float* audioFrame, size_t numSa
     if (maxOutputSamples > 0)
     {
         resampleScratch.resize ((size_t) maxOutputSamples);
+        // LagrangeInterpolator::process() is output-driven: the caller specifies
+        // how many OUTPUT samples are wanted, not how many input samples are fed.
+        // We use the 6-argument overload (passing numInputSamplesAvailable) to
+        // ensure it zero-pads safely instead of reading past the end of audioFrame
+        // if the output request ever exceeds the input available (verified against
+        // JUCE 8.0.7 in vcpkg_installed/x64-windows/include/JUCE-8.0.7/...).
         resampler.process (resampleSpeedRatio, audioFrame,
                             resampleScratch.data(), maxOutputSamples,
                             (int) numSamples, 0);

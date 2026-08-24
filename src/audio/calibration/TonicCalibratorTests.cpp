@@ -1,5 +1,6 @@
 #include "TonicCalibrator.h"
 #include "FakePitchEngine.h"
+#include "../pitchengine/CrepePitchEngine.h"
 #include <juce_core/juce_core.h>
 #include <vector>
 
@@ -127,6 +128,34 @@ public:
             // the window yet (elapsedMs should be back to 0).
             auto result = calibrator.processFrame (block.data(), block.size());
             expect (result.status == CalibrationStatus::InProgress);
+        }
+
+        beginTest ("End-to-end: a real 220Hz sine through CrepePitchEngine calibrates to ~220Hz Sa");
+        {
+            CrepePitchEngine engine (juce::String ("models/crepe/small.onnx"));
+            auto prepareStatus = engine.prepare (16000.0); // native rate, same reasoning as the PitchEngine plan's sine test
+            expect (prepareStatus == PitchEngineStatus::Ok);
+
+            TonicCalibrator calibrator (engine, 16000.0, 1000); // shorter window for test speed - 1s instead of 3s
+
+            constexpr double sr = 16000.0;
+            constexpr float freq = 220.0f;
+            // 16 full 1024-sample chunks (1024ms) are needed to close the 1000ms
+            // window: each chunk is exactly 1024/16000*1000 = 64ms, so 15 chunks
+            // (from an exact 16000-sample/1.0s buffer) only total 960ms and would
+            // leave the calibrator stuck InProgress forever. 16384 samples guarantees
+            // 16 full chunks feed through the offset+1024<=size loop below.
+            std::vector<float> sine (16384);
+            for (size_t i = 0; i < sine.size(); ++i)
+                sine[i] = std::sin (2.0 * juce::MathConstants<double>::pi * freq * (double) i / sr) * 0.5f;
+
+            CalibrationResult result { CalibrationStatus::InProgress, std::nullopt };
+            for (size_t offset = 0; offset + 1024 <= sine.size(); offset += 1024)
+                result = calibrator.processFrame (sine.data() + offset, 1024);
+
+            expect (result.status == CalibrationStatus::Success);
+            if (result.status == CalibrationStatus::Success && result.saHz.has_value())
+                expectWithinAbsoluteError (*result.saHz, 220.0f, 5.0f);
         }
     }
 };

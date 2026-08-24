@@ -130,11 +130,14 @@ public:
             expect (result.status == CalibrationStatus::InProgress);
         }
 
-        beginTest ("A mixed window with confident frames under 50% of total calls reports Timeout, not Success");
+        beginTest ("A mixed window with confident frames below the absolute minimum reports Timeout, not Success");
         {
-            // 2 confident frames out of 10 total calls (20% ratio) - non-zero
-            // confident frequencies exist, but there isn't enough signal to
-            // trust them as a calibration (Fix 1: minimum voiced-frame ratio).
+            // 2 confident frames out of 10 total calls - non-zero confident
+            // frequencies exist, but there isn't enough signal to trust them as
+            // a calibration. This is now gated on an absolute minimum count
+            // (minConfidentReadings, default 10), not a ratio of confident to
+            // total calls - see the new "total call count doesn't matter" test
+            // below for why the absolute count is the right gate.
             std::vector<PitchFrame> script;
             script.push_back (PitchFrame { 0, 220.0f, 0.9f });
             script.push_back (PitchFrame { 0, std::nullopt, 0.0f });
@@ -159,6 +162,68 @@ public:
 
             expect (result.status == CalibrationStatus::Timeout);
             expect (! result.saHz.has_value());
+        }
+
+        beginTest ("8 confident readings report Timeout regardless of how many total calls it took to gather them (absolute minimum, not a ratio)");
+        {
+            // With the default minConfidentReadings=10, 8 confident readings is
+            // below the floor and should report Timeout - and, crucially, it
+            // should report Timeout the same way whether those 8 confident
+            // readings arrived among 10 total calls or among 30 total calls.
+            // Under the old ratio-based gate, 8/10 (80%) would have passed while
+            // 8/30 (~27%) would have failed - the whole point of the new gate
+            // is that neither total call count matters, only the absolute count
+            // of confident readings.
+
+            // Variant A: 8 confident out of 10 total calls (300ms blocks, the
+            // default window-closing cadence used elsewhere in this file).
+            {
+                std::vector<PitchFrame> script;
+                for (int i = 0; i < 8; ++i)
+                    script.push_back (PitchFrame { 0, 220.0f, 0.9f });
+                script.push_back (PitchFrame { 0, std::nullopt, 0.0f });
+                script.push_back (PitchFrame { 0, std::nullopt, 0.0f });
+
+                FakePitchEngine engine (script);
+                engine.prepare (44100.0);
+
+                TonicCalibrator calibrator (engine, 44100.0);
+                std::vector<float> block (44100 * 300 / 1000, 0.0f); // 300ms * 10 = 3000ms window
+
+                CalibrationResult result { CalibrationStatus::InProgress, std::nullopt };
+                for (int i = 0; i < 10; ++i)
+                    result = calibrator.processFrame (block.data(), block.size());
+
+                expect (result.status == CalibrationStatus::Timeout);
+                expect (! result.saHz.has_value());
+            }
+
+            // Variant B: the same 8 confident readings, but this time spread
+            // among 30 total calls (100ms blocks, so the window still closes at
+            // 3000ms) - simulating many extra calls that returned nullopt purely
+            // because the underlying engine was still buffering samples toward
+            // its analysis window, not because the singer stayed silent. The
+            // extra 20 buffering-only calls must not change the outcome.
+            {
+                std::vector<PitchFrame> script;
+                for (int i = 0; i < 8; ++i)
+                    script.push_back (PitchFrame { 0, 220.0f, 0.9f });
+                for (int i = 0; i < 22; ++i)
+                    script.push_back (PitchFrame { 0, std::nullopt, 0.0f });
+
+                FakePitchEngine engine (script);
+                engine.prepare (44100.0);
+
+                TonicCalibrator calibrator (engine, 44100.0);
+                std::vector<float> block (44100 * 100 / 1000, 0.0f); // 100ms * 30 = 3000ms window
+
+                CalibrationResult result { CalibrationStatus::InProgress, std::nullopt };
+                for (int i = 0; i < 30; ++i)
+                    result = calibrator.processFrame (block.data(), block.size());
+
+                expect (result.status == CalibrationStatus::Timeout);
+                expect (! result.saHz.has_value());
+            }
         }
 
         beginTest ("reset() resets the injected engine, clearing any stale continuity-filter state before a retry");

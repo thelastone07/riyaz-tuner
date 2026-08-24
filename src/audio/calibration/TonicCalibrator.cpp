@@ -2,8 +2,8 @@
 #include <algorithm>
 #include <cmath>
 
-TonicCalibrator::TonicCalibrator (PitchEngine& engineIn, double sampleRateIn, uint64_t windowMsIn)
-    : engine (engineIn), sampleRate (sampleRateIn), windowMs (windowMsIn)
+TonicCalibrator::TonicCalibrator (PitchEngine& engineIn, double sampleRateIn, uint64_t windowMsIn, int minConfidentReadingsIn)
+    : engine (engineIn), sampleRate (sampleRateIn), windowMs (windowMsIn), minConfidentReadings (minConfidentReadingsIn)
 {
 }
 
@@ -11,8 +11,6 @@ CalibrationResult TonicCalibrator::processFrame (const float* audioFrame, size_t
 {
     if (finalResult.status != CalibrationStatus::InProgress)
         return finalResult; // idempotent once the window has closed
-
-    ++totalFramesInWindow;
 
     PitchFrame frame = engine.processFrame (audioFrame, numSamples);
     if (frame.frequencyHz.has_value())
@@ -24,11 +22,11 @@ CalibrationResult TonicCalibrator::processFrame (const float* audioFrame, size_t
     if (elapsedMs < windowMs)
         return { CalibrationStatus::InProgress, std::nullopt };
 
-    // Window closed - classify. Require at least half of the frames in the
-    // window to have been confident; a handful of confident frames in an
-    // otherwise-silent/unvoiced window isn't enough signal to trust.
-    const bool enoughSignal = (double) confidentFrequencies.size() >= 0.5 * (double) totalFramesInWindow;
-    if (confidentFrequencies.empty() || ! enoughSignal)
+    // Window closed - classify. Require at least minConfidentReadings confident
+    // frames to have been gathered, regardless of how many total processFrame()
+    // calls occurred (see the constructor doc comment for why an absolute
+    // count, not a ratio, is the right gate here).
+    if (confidentFrequencies.size() < (size_t) minConfidentReadings)
     {
         finalResult = { CalibrationStatus::Timeout, std::nullopt };
         return finalResult;
@@ -71,7 +69,6 @@ void TonicCalibrator::reset()
     engine.reset();
     elapsedMs = 0;
     samplesSeen = 0;
-    totalFramesInWindow = 0;
     confidentFrequencies.clear();
     finalResult = { CalibrationStatus::InProgress, std::nullopt };
 }

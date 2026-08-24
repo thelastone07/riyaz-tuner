@@ -50,6 +50,15 @@ target_compile_definitions(riyaaz_calibration PUBLIC
     JUCE_STANDALONE_APPLICATION=1
 )
 
+add_library(riyaaz_pipeline STATIC
+    src/audio/pipeline/PitchPipeline.cpp
+)
+target_include_directories(riyaaz_pipeline PUBLIC src)
+target_link_libraries(riyaaz_pipeline PUBLIC riyaaz_calibration riyaaz_swarmap juce::juce_core)
+target_compile_definitions(riyaaz_pipeline PUBLIC
+    JUCE_STANDALONE_APPLICATION=1
+)
+
 juce_add_console_app(riyaaz_tests PRODUCT_NAME "Riyaaz Tests")
 target_sources(riyaaz_tests PRIVATE
     src/audio/swarmap/SwarMapperTests.cpp
@@ -57,12 +66,14 @@ target_sources(riyaaz_tests PRIVATE
     src/audio/pitchengine/PitchContinuityFilterTests.cpp
     src/audio/pitchengine/CrepePitchEngineTests.cpp
     src/audio/calibration/TonicCalibratorTests.cpp
+    src/audio/pipeline/PitchPipelineTests.cpp
     src/TestMain.cpp
 )
 target_link_libraries(riyaaz_tests PRIVATE
     riyaaz_swarmap
     riyaaz_pitchengine
     riyaaz_calibration
+    riyaaz_pipeline
     juce::juce_core
 )
 riyaaz_copy_onnxruntime_dll(riyaaz_tests)

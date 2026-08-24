@@ -2,6 +2,31 @@
 
 Deferred, non-blocking items. Not urgent, but shouldn't get silently lost.
 
+## From TonicCalibrator final review (2026-08-18, commits 8fb195f..01ad60f)
+
+- `TonicCalibrator`'s `minConfidentReadings` constructor parameter has no defensive
+  guard against `<= 0`. A value of `0` (the natural way to express "no minimum")
+  causes an out-of-bounds `operator[]` read on an empty `confidentFrequencies`
+  vector. No in-tree caller currently passes anything but the default (10), so
+  this isn't reachable today, but a `std::max(1, minConfidentReadingsIn)` clamp
+  or a `jassert` in the constructor is one line and worth adding before this
+  parameter is ever exposed to real configuration.
+- The test proving the ratio-gate-replacement fix only covers the "few confident
+  readings among many calls, still correctly Timeout" side. It doesn't cover the
+  side that actually motivated the fix: "enough confident readings (>=10) buried
+  among many buffering-only nullopt calls, still correctly Success" (the old
+  ratio gate would have wrongly reported Timeout here; nothing currently proves
+  the new gate reports Success). Worth adding once the real-time plan makes
+  this scenario concrete.
+- `PitchEngine::processFrame()`'s `nullopt` return is still overloaded between
+  two meanings ("unvoiced/low-confidence" vs. "still buffering toward a full
+  analysis window") with no way for a caller to distinguish them. TonicCalibrator's
+  absolute-minimum-count fix sidesteps needing this distinction, but the next
+  plan (real-time audio wiring) may still want it for other reasons (e.g. a live
+  UI indicator that says "listening..." during buffering vs. "no pitch detected"
+  during genuine silence) — flagging as a real interface gap, not re-opening it
+  as a blocker.
+
 ## From plan-eng-review (2026-08-18)
 
 - Benchmark CPU vs. GPU (CUDA/DirectML/CoreML) execution provider for CREPE inference throughput once the pitch pipeline exists.

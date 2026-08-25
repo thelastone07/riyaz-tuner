@@ -2,10 +2,16 @@
 #include <cmath>
 #include <cstdlib>
 
+KarplusStrongString::KarplusStrongString()
+{
+    delayLine.reserve (kMaxDelayLineLength);
+}
+
 void KarplusStrongString::pluck (float frequencyHz, double sampleRateIn, float amplitude)
 {
     const float clampedFrequency = juce::jmax (kMinFrequencyHz, frequencyHz);
     const int delayLineLength = juce::jmax (2, (int) std::lround (sampleRateIn / (double) clampedFrequency));
+    jassert ((size_t) delayLineLength <= kMaxDelayLineLength);
     delayLine.assign ((size_t) delayLineLength, 0.0f);
 
     for (auto& sample : delayLine)

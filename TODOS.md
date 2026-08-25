@@ -2,6 +2,58 @@
 
 Deferred, non-blocking items. Not urgent, but shouldn't get silently lost.
 
+## From the Tanpura final-review fix wave (2026-08-25)
+
+Deferred out of the fix wave that closed the four Important findings from the
+whole-branch tanpura review. Each of these is a *proper* fix for something the
+fix wave only partially addressed, plus one portability item.
+
+- **Karplus-Strong tuning still has a residual ~±8 cent error — the proper fix
+  is a fractional (interpolated) delay.** `KarplusStrongString::pluck()` now
+  computes `N = lround(sampleRate/frequencyHz + 0.5)`, which removes the
+  *systematic sharp bias* (the in-place filter's true loop delay is `N - 0.5`
+  samples, so plain rounding always resonated above the target — up to +15
+  cents at realistic tonics) and halves the worst case. But `N` is still an
+  integer, so a quantization error of up to roughly ±8 cents remains. This
+  matters more than a normal tuning nit: the tanpura is the user's tuning
+  reference *and* the UI simultaneously grades their deviation from the exact
+  calibrated Sa in cents, so any drone error shows up as the app disagreeing
+  with itself. Proper fix: interpolate the read position so the total loop
+  delay equals `sampleRate / frequencyHz` exactly — linear interpolation or a
+  first-order allpass tuning filter; the codebase already uses
+  `juce::LagrangeInterpolator` in `CrepePitchEngine`, so fractional delay is
+  not a foreign concept here.
+- **End a string's ring on a measured amplitude/RMS floor rather than a fixed
+  duration.** The fix wave made the cutoff duration-correct — it is now
+  `kMaxRingSeconds = 4.0f` converted to samples at pluck time from the real
+  device rate, instead of a `44100 * 4` raw sample count that silently shrank
+  to 1.84s at 96kHz. That fixes the sample-rate dependence but not the
+  underlying problem: measured t60 is ~8s for a madhya Sa string and ~16s for
+  a mandra Sa, both far longer than 4s, so the string is still audible when it
+  is cut (measured amplitude at the cut is 0.043–0.100 for the lower strings)
+  and the cut is a step discontinuity — a faint click, once per string per
+  pluck cycle. Terminating on an actual amplitude/RMS floor would end the ring
+  at true silence instead of on an arbitrary clock.
+- **`std::rand()` runs on the audio thread inside `pluck()`.** It is called
+  once per delay-line slot to fill the noise burst. On MSVC — the only
+  platform this currently builds for — `rand()` is TLS-backed and lock-free,
+  so this is not a live bug today. On glibc it delegates to `random()`, which
+  takes an internal lock: a hard real-time violation the moment this is built
+  for Linux, and directly contrary to the plan's own "no locks on the hot
+  path" constraint. Replacing it with a `juce::Random` member instance would
+  be both allocation- and lock-free, and would close the separately-known
+  "unseeded `rand()` makes tests non-deterministic" minor in the same edit.
+- **The tanpura drone can bias re-calibration if it stays audible through a
+  device restart.** (Recorded here per the tanpura plan's commitment at
+  `2026-08-25-tanpura.md:857`, which was never actually carried out.)
+  `releaseResources()` does not reset `enabled`, and `prepareToPlay()` sets
+  `retunePending = true`, so on an audio-device restart the drone resumes
+  seamlessly at the old Sa while a fresh calibration runs — and the mic can
+  hear it. Narrow path: only reachable via an audio-device restart, not
+  through normal use, and the user can drag the volume slider to zero. Worth
+  either muting the drone for the duration of a calibration, or detecting
+  mic bleed, once a stop control or device-selector UI exists.
+
 ## From RealtimeApp final-review fix-wave re-review (2026-08-25, commit 52324b1)
 
 - **`~PitchWorker`'s message-thread `jassert` documents a contract that isn't
@@ -141,7 +193,12 @@ Deferred, non-blocking items. Not urgent, but shouldn't get silently lost.
 ## From plan-eng-review (2026-08-18)
 
 - Benchmark CPU vs. GPU (CUDA/DirectML/CoreML) execution provider for CREPE inference throughput once the pitch pipeline exists.
-- Source and license-verify ~12 pre-recorded tanpura samples (one per semitone) — **blocking gate before the tanpura milestone starts**, not just a nice-to-have.
+- ~~Source and license-verify ~12 pre-recorded tanpura samples (one per
+  semitone) — blocking gate before the tanpura milestone starts.~~
+  **No longer applicable.** The tanpura milestone shipped fully synthesized
+  (Karplus-Strong, `src/audio/tanpura/`) specifically to avoid this licensing
+  gate — the plan's Global Constraint required no sampled audio, and
+  `git ls-files` finds no audio assets in the repo. Nothing needs licensing.
 - Verify RVC's `rmvpe.onnx` license terms (RVC lineage is GPL-adjacent) — **blocking gate before v1.1 RMVPE work starts**.
 
 ## ONNX Runtime dependency (2026-08-18)

@@ -77,6 +77,8 @@ target_sources(riyaaz_tests PRIVATE
     src/audio/calibration/TonicCalibratorTests.cpp
     src/audio/pipeline/PitchPipelineTests.cpp
     src/audio/worker/PitchWorkerTests.cpp
+    src/ui/PitchGraphComponent.cpp
+    src/ui/PitchGraphPointBufferTests.cpp
     src/TestMain.cpp
 )
 target_compile_definitions(riyaaz_tests PRIVATE
@@ -98,5 +100,6 @@ target_link_libraries(riyaaz_tests PRIVATE
     riyaaz_pipeline
     riyaaz_worker
     juce::juce_core
+    juce::juce_gui_basics
 )
 riyaaz_copy_onnxruntime_dll(riyaaz_tests)

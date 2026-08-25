@@ -34,6 +34,29 @@ public:
             expectEquals ((long long) points[0].timestampMs, (long long) 2500);
         }
 
+        beginTest ("A timestamp older than the newest point discards the whole buffer (engine timestamp counter restarted)");
+        {
+            // Models a second prepareToPlay(): CrepePitchEngine's timestamp
+            // counter restarts at 0, so the graph starts receiving small
+            // timestamps while still holding large ones. Without the
+            // defensive clear, the age-eviction test
+            // (front.timestampMs + maxAgeMs < timestampMs) could never fire
+            // again - unbounded growth - and paint()'s unsigned
+            // newest-oldest subtraction would underflow.
+            PitchGraphPointBuffer buffer (8000);
+            buffer.addPoint (5000, 0.0f);
+            buffer.addPoint (5100, 1.0f);
+            buffer.addPoint (5200, 2.0f);
+            expectEquals ((int) buffer.getPoints().size(), 3);
+
+            buffer.addPoint (40, -7.0f); // smaller than the last timestamp added
+
+            auto& points = buffer.getPoints();
+            expectEquals ((int) points.size(), 1); // the three old high-timestamp points are gone, not merged
+            expectEquals ((long long) points[0].timestampMs, (long long) 40);
+            expectWithinAbsoluteError (points[0].centsFromSa, -7.0f, 0.01f);
+        }
+
         beginTest ("clear() removes all points");
         {
             PitchGraphPointBuffer buffer (8000);

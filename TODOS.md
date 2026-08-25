@@ -223,3 +223,25 @@ to be design inputs for the next plan (wiring `CrepePitchEngine` behind
 - Set a default `CMAKE_BUILD_TYPE` for the Ninja single-config generator; pin a `builtin-baseline` in `vcpkg.json`.
 - `SwarMapperTests.cpp`'s Mandra test uses `-150.0f`, an exact `.5` rounding tie (stable today under `std::lround`'s away-from-zero behavior, but fragile if that ever changes) — `-145.0f` would test the same path without depending on tie-breaking.
 - Decide the NaN/silence contract for `SwarMapper::update()` once `PitchEngine` exists and it's clear whether unvoiced frames get filtered upstream or call `reset()` directly — don't design this speculatively before that decision exists.
+
+## From RealtimeApp final review (2026-08-25)
+
+- **`PitchWorker::run()` drain size is unbounded by the audio block size.** Each
+  loop iteration reads *all* currently-ready FIFO samples and hands them to
+  `PitchPipeline::process()` in a single call. In steady state that is roughly
+  one audio callback, but if the worker thread ever falls behind real time (slow
+  ONNX inference, CPU contention, a debugger break, a device glitch), the next
+  drain can hand the pipeline many callbacks' worth of audio — up to the whole
+  FIFO capacity — as one block. That collapses what would have been many
+  `PitchEngine::processFrame()` calls into one, which matters for
+  `TonicCalibrator`: its `minConfidentReadings` gate counts *confident engine
+  frames*, so a stalled worker can make an otherwise-fine calibration window
+  time out. The earlier plan's rule of thumb ("keep blocks under ~300ms so the
+  calibrator gets multiple `process()` calls") is therefore no longer the real
+  invariant; the real one is **the worker thread keeps up with real time**, and
+  nothing currently enforces or detects a violation of it. Documented in
+  `PitchWorker.h`. Possible fixes for a later pass, none implemented now: cap
+  how many samples one drain processes (looping until the FIFO is empty), or
+  read in fixed CREPE-window-sized chunks so engine-frame counts are independent
+  of drain timing; optionally surface a "worker fell behind" counter for
+  diagnostics.

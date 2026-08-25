@@ -13,15 +13,27 @@ PitchWorker::PitchWorker (PitchPipeline& pipelineIn, Listener& listenerIn, int f
 
 PitchWorker::~PitchWorker()
 {
+    // Real contract: a PitchWorker MUST be destroyed on the message thread -
+    // the same thread that runs handleAsyncUpdate(). All current callers
+    // (MainComponent's destructor / releaseResources(), and the unit tests)
+    // already satisfy this; the assertion documents and enforces it.
+    jassert (juce::MessageManager::getInstance()->isThisTheMessageThread());
+
     stop();
     // stop() joins the worker thread, but a triggerAsyncUpdate() issued just
-    // before that join may still be pending in the message queue. If it were
-    // left pending and the message thread dispatched it after this
-    // destructor's body starts running (e.g. torn down from a non-message
-    // thread, like an audio-device teardown callback), handleAsyncUpdate()
-    // would fire on a partially-destroyed - or already destroyed - object.
-    // Cancel it explicitly now that the worker thread can no longer post
-    // another one.
+    // before that join may still be pending in the message queue.
+    // cancelPendingUpdate() removes that NOT-YET-DISPATCHED update so it can
+    // never fire against a partially-destroyed object.
+    //
+    // Note what this does NOT do: if the message thread has ALREADY entered
+    // handleAsyncUpdate(), cancelPendingUpdate() is a no-op for that
+    // in-flight call - JUCE only clears the pending flag / removes a queued
+    // message, it cannot unwind a callback that is already running. So this
+    // call is not, by itself, protection against tearing down from a
+    // non-message thread; the jassert above states the guarantee that
+    // actually makes destruction safe (destroy on the message thread, so an
+    // in-progress handleAsyncUpdate() cannot be concurrent with this
+    // destructor by construction).
     cancelPendingUpdate();
 }
 
@@ -88,6 +100,26 @@ void PitchWorker::run()
             }
 
             auto update = pipeline.process (drainScratch.data(), (size_t) n);
+
+            // Automatic calibration retry. TonicCalibrator::processFrame() is
+            // idempotent once its window closes, so a Timeout/Unstable result
+            // is returned forever afterwards, and PitchPipeline never leaves
+            // the Calibrating phase except via Success - without this, one
+            // failed calibration would brick the app permanently (and a failed
+            // FIRST calibration is likely, since the window opens the instant
+            // the app launches, before the user has sung anything).
+            //
+            // Restarting here is safe with no extra locking: this is the same
+            // thread that just called pipeline.process(), and it is the only
+            // thread that ever touches the pipeline. The failed status is
+            // still stored/dispatched below so the UI can say "trying
+            // again..." - the retry is invisible-but-announced, not silent.
+            if (update.phase == PitchPipelinePhase::Calibrating
+                && (update.calibrationStatus == CalibrationStatus::Timeout
+                    || update.calibrationStatus == CalibrationStatus::Unstable))
+            {
+                pipeline.restartCalibration();
+            }
 
             {
                 const juce::ScopedLock sl (latestUpdateLock);

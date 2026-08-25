@@ -23,13 +23,16 @@ MainComponent::~MainComponent()
 
 void MainComponent::prepareToPlay (int /*samplesPerBlockExpected*/, double sampleRate)
 {
+    releaseResources(); // idempotent - stops+joins any existing worker and drops the old pipeline first, making this method safe to call more than once
+
     auto prepareStatus = engine.prepare (sampleRate);
     if (prepareStatus != PitchEngineStatus::Ok)
     {
-        juce::MessageManager::callAsync ([this]
+        juce::MessageManager::callAsync ([safeThis = juce::Component::SafePointer<MainComponent> (this)]
         {
-            statusLabel.setText ("Could not load the pitch model (models/crepe/small.onnx) - check it exists relative to the app's working directory.",
-                                  juce::dontSendNotification);
+            if (safeThis != nullptr)
+                safeThis->statusLabel.setText ("Could not load the pitch model (models/crepe/small.onnx) - check it exists relative to the app's working directory.",
+                                                juce::dontSendNotification);
         });
         return;
     }
@@ -50,10 +53,11 @@ void MainComponent::prepareToPlay (int /*samplesPerBlockExpected*/, double sampl
     worker = std::make_unique<PitchWorker> (*pipeline, static_cast<PitchWorker::Listener&> (*this));
     worker->start();
 
-    juce::MessageManager::callAsync ([this]
+    juce::MessageManager::callAsync ([safeThis = juce::Component::SafePointer<MainComponent> (this)]
     {
-        statusLabel.setText ("Calibrating - sing a steady, comfortable note for a few seconds...",
-                              juce::dontSendNotification);
+        if (safeThis != nullptr)
+            safeThis->statusLabel.setText ("Calibrating - sing a steady, comfortable note for a few seconds...",
+                                            juce::dontSendNotification);
     });
 }
 

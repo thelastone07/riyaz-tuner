@@ -7,13 +7,41 @@ MainComponent::MainComponent()
     statusLabel.setJustificationType (juce::Justification::centred);
     statusLabel.setText ("Starting...", juce::dontSendNotification);
 
+    // Added (and made visible) BEFORE attachToComponent() below: an attached
+    // Label mirrors its owner's visibility at attach time and adds itself to
+    // the owner's parent, so attaching to a slider that is not yet visible /
+    // not yet parented makes the label's own state depend on JUCE's later
+    // visibility-change callback to recover.
+    addAndMakeVisible (tanpuraVolumeSlider);
+    tanpuraVolumeSlider.setRange (0.0, 1.0);
+    tanpuraVolumeSlider.setValue (0.5, juce::dontSendNotification);
+    tanpuraVolumeSlider.onValueChange = [this]
+    {
+        tanpuraSource.setGain ((float) tanpuraVolumeSlider.getValue());
+    };
+
+    addAndMakeVisible (tanpuraVolumeLabel);
+    tanpuraVolumeLabel.setText ("Tanpura", juce::dontSendNotification);
+    tanpuraVolumeLabel.attachToComponent (&tanpuraVolumeSlider, true);
+
+    // Push the slider's initial value into the source here, on the message
+    // thread, while the audio device is still closed - rather than from
+    // prepareToPlay(), which is an audio-device callback and is NOT guaranteed
+    // to run on the message thread (the same reason every statusLabel/
+    // pitchGraph touch below goes through callAsync). Doing it here also stops
+    // the two defaults from having to agree by coincidence. prepareToPlay()
+    // never resets the source's gain, so it stays correct across device
+    // restarts without being re-sent.
+    tanpuraSource.setGain ((float) tanpuraVolumeSlider.getValue());
+
     addAndMakeVisible (pitchGraph);
 
     setSize (600, 400);
 
-    // Mono input (mic), no audio output needed - the app only analyzes,
-    // it doesn't play anything back yet (tanpura/metronome are later work).
-    setAudioChannels (1, 0);
+    // Mono input (mic) plus STEREO output: the tanpura drone is rendered into
+    // the output channels. See getNextAudioBlock() for why this channel count
+    // change makes the order of operations there safety-critical.
+    setAudioChannels (1, 2);
 
     // setAudioChannels() opens the device synchronously (and, on success, has
     // already called prepareToPlay() by the time it returns). If no device
@@ -37,9 +65,17 @@ MainComponent::~MainComponent()
     shutdownAudio();
 }
 
-void MainComponent::prepareToPlay (int /*samplesPerBlockExpected*/, double sampleRate)
+void MainComponent::prepareToPlay (int samplesPerBlockExpected, double sampleRate)
 {
     releaseResources(); // idempotent - stops+joins any existing worker and drops the old pipeline first, making this method safe to call more than once
+
+    // Prepared BEFORE the pitch-path setup below, not after it: getNextAudioBlock()
+    // now runs the tanpura source on EVERY block regardless of whether the pitch
+    // path came up, so the source must always be holding this device's real
+    // sample rate - including on the paths where engine.prepare() fails and this
+    // function returns early. (It stays silent until calibration enables it, so
+    // preparing it early has no audible effect.)
+    tanpuraSource.prepareToPlay (samplesPerBlockExpected, sampleRate);
 
     // engine.prepare() below restarts CrepePitchEngine's internal timestamp
     // counter at 0, so any points still held by the graph carry timestamps
@@ -91,11 +127,31 @@ void MainComponent::prepareToPlay (int /*samplesPerBlockExpected*/, double sampl
 
 void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& bufferToFill)
 {
-    if (worker == nullptr || bufferToFill.buffer == nullptr || bufferToFill.buffer->getNumChannels() == 0)
-        return;
+    // ORDER IS SAFETY-CRITICAL. With 1 input channel and 2 output channels,
+    // JUCE's AudioSourcePlayer aliases channel 0 of this buffer onto output
+    // channel 0's own memory, PRE-FILLED with a copy of the mic input (per
+    // juce_AudioSourcePlayer.cpp's channel-compaction logic: when
+    // numInputs <= numOutputs, the input channels are copied directly into the
+    // corresponding output channels' memory before this callback runs).
+    // Read the mic samples out FIRST - before anything below overwrites this
+    // buffer - or the raw mic signal gets echoed straight back out to the
+    // speakers, a real feedback risk with a mic and speakers in the same room,
+    // not just a correctness bug.
+    if (worker != nullptr && bufferToFill.buffer != nullptr && bufferToFill.buffer->getNumChannels() > 0)
+    {
+        const float* channelData = bufferToFill.buffer->getReadPointer (0, bufferToFill.startSample);
+        worker->pushAudio (channelData, bufferToFill.numSamples);
+    }
 
-    const float* channelData = bufferToFill.buffer->getReadPointer (0, bufferToFill.startSample);
-    worker->pushAudio (channelData, bufferToFill.numSamples);
+    // Deliberately NOT inside the guard above, and deliberately not an early
+    // return when there is no worker: this call is what puts defined content
+    // into the output buffer. TanpuraAudioSource::getNextAudioBlock() always
+    // either clears the active region (while disabled) or writes every sample
+    // of every channel (while enabled), so it also erases the aliased mic copy
+    // described above. Bailing out before it - as the old worker-less early
+    // return did, back when there were zero output channels - would now leave
+    // that mic copy sitting in the output buffer and play it to the speakers.
+    tanpuraSource.getNextAudioBlock (bufferToFill);
 }
 
 void MainComponent::releaseResources()
@@ -104,6 +160,7 @@ void MainComponent::releaseResources()
         worker->stop();
     worker.reset();
     pipeline.reset();
+    tanpuraSource.releaseResources();
 }
 
 void MainComponent::pitchWorkerUpdate (const PitchPipelineUpdate& update)
@@ -146,6 +203,13 @@ void MainComponent::pitchWorkerUpdate (const PitchPipelineUpdate& update)
             // Fires regardless of whether THIS frame is voiced: it announces
             // the transition, not the current pitch.
             statusLabel.setText ("Calibrated!   " + saText, juce::dontSendNotification);
+
+            // Start the drone on the Sa we just calibrated to. Both setters are
+            // atomic stores consumed by the audio thread on its next block, so
+            // calling them from the message thread here is fine. setSa() before
+            // setEnabled() so the very first audible block is already in tune.
+            tanpuraSource.setSa (update.saHz);
+            tanpuraSource.setEnabled (true);
         }
         else if (update.swarLabel.has_value() && update.centsFromSa.has_value())
         {
@@ -176,5 +240,13 @@ void MainComponent::resized()
 {
     auto area = getLocalBounds();
     statusLabel.setBounds (area.removeFromTop (60));
+
+    // Only the slider is positioned: tanpuraVolumeLabel is attached to it, so
+    // JUCE re-places the label itself whenever the slider moves. The left inset
+    // is what the attached label is drawn into - an attached label's width is
+    // clamped to its owner's x, so a slider at x == 0 would leave no room and
+    // the label would collapse to nothing.
+    tanpuraVolumeSlider.setBounds (area.removeFromTop (30).withTrimmedLeft (80).withTrimmedRight (10));
+
     pitchGraph.setBounds (area);
 }

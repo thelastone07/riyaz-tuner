@@ -135,6 +135,7 @@ target_link_libraries(riyaaz_app PRIVATE
     riyaaz_pitchengine
     riyaaz_worker
     riyaaz_swarmap
+    riyaaz_tanpura
     juce::juce_audio_utils
     juce::juce_gui_extra
 )

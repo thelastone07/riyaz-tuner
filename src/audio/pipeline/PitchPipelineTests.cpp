@@ -77,15 +77,35 @@ public:
             // Script one entry per expected processFrame() call, explicitly:
             // 10 calibration frames, then a confident Live-phase frame (locks
             // SwarMapper to Sa), then an explicit unvoiced frame, then a
-            // confident frame close to Sa again. PitchFrame's frequencyHz is
-            // already std::optional<float>, so scripting nullopt directly
+            // confident frame at +55 cents from Sa. PitchFrame's frequencyHz
+            // is already std::optional<float>, so scripting nullopt directly
             // needs no changes to FakePitchEngine.
+            //
+            // +55 cents is deliberately NOT close to Sa in absolute terms -
+            // it's chosen to be discriminating between "the hysteresis lock
+            // survived the unvoiced gap" and "SwarMapper started fresh":
+            //   - SwarMapper's lock-retention threshold is
+            //     50 + hysteresisMargin/2 = 50 + 15/2 = 57.5 cents from the
+            //     locked center (see SwarMapper::update() in
+            //     SwarMapper.cpp). +55 cents is inside that band, so if the
+            //     lock on Sa (0 cents) survived the unvoiced gap, this frame
+            //     still resolves to Sa.
+            //   - A FRESH/unlocked SwarMapper instead nearest-quantizes to
+            //     the closest 100-cent center: nearestCenterCents(55) rounds
+            //     55/100 = 0.55 to 1, i.e. 100 cents = ReKomal, NOT Sa.
+            // So this frame's expected label (Sa vs ReKomal) actually
+            // depends on whether the unvoiced frame preserved the lock -
+            // unlike a near-zero-cents frame, which would resolve to Sa
+            // either way and so couldn't catch a regression here.
             std::vector<PitchFrame> script;
             for (int i = 0; i < 10; ++i) // calibration window
                 script.push_back (PitchFrame { 0, 220.0f, 0.9f });
             script.push_back (PitchFrame { 0, 220.0f, 0.9f });          // 11th call: first Live-phase frame, locks SwarMapper to Sa
             script.push_back (PitchFrame { 0, std::nullopt, 0.0f });    // 12th call: unvoiced
-            script.push_back (PitchFrame { 0, 220.5f, 0.9f });          // 13th call: confident again, close to Sa
+            // freq = 220.0 * 2^(55/1200) ~= 227.101Hz - computed with
+            // std::pow for exactness rather than a hardcoded literal.
+            const float freqPlus55Cents = 220.0f * std::pow (2.0f, 55.0f / 1200.0f);
+            script.push_back (PitchFrame { 0, freqPlus55Cents, 0.9f }); // 13th call: confident again, +55 cents from Sa (see comment above)
 
             FakePitchEngine engine (script);
             engine.prepare (44100.0);
@@ -109,7 +129,63 @@ public:
             auto afterUnvoiced = pipeline.process (block.data(), block.size()); // 13th call
             expect (afterUnvoiced.swarLabel.has_value());
             if (afterUnvoiced.swarLabel.has_value())
-                expectEquals ((int) afterUnvoiced.swarLabel->swar, (int) Swar::Sa); // still locked to Sa via hysteresis, unaffected by the unvoiced gap
+                expectEquals ((int) afterUnvoiced.swarLabel->swar, (int) Swar::Sa); // still locked to Sa via hysteresis (55 cents < 57.5 threshold) - would read ReKomal instead if the lock had NOT survived the unvoiced gap
+        }
+
+        beginTest ("restartCalibration() clears calibrator, engine, and SwarMapper state, letting a full second calibration attempt run to completion");
+        {
+            // Same script-construction idiom as the very first test above:
+            // exactly 10 explicit entries (9 confident 220Hz + 1 unvoiced) so
+            // this deterministically produces Timeout after 10 calls (9
+            // confident < 10 minConfidentReadings).
+            //
+            // FakePitchEngine::reset() rewinds nextIndex to 0 (see
+            // FakePitchEngine.h), so after restartCalibration() calls
+            // engine.reset(), the SECOND attempt below replays this SAME
+            // script from script[0] again - it does NOT continue from where
+            // the first attempt left off. The second attempt's call counts
+            // are built around that real behavior.
+            std::vector<PitchFrame> script;
+            for (int i = 0; i < 9; ++i)
+                script.push_back (PitchFrame { 0, 220.0f, 0.9f });
+            script.push_back (PitchFrame { 0, std::nullopt, 0.0f });
+
+            FakePitchEngine engine (script);
+            engine.prepare (44100.0);
+
+            PitchPipeline pipeline (engine, 44100.0);
+            std::vector<float> block (44100 * 300 / 1000, 0.0f); // 300ms, matches this file's convention
+
+            PitchPipelineUpdate update { PitchPipelinePhase::Calibrating };
+            for (int i = 0; i < 10; ++i) // first attempt's full 3000ms window
+                update = pipeline.process (block.data(), block.size());
+            expect (update.phase == PitchPipelinePhase::Calibrating);
+            expect (update.calibrationStatus == CalibrationStatus::Timeout);
+
+            pipeline.restartCalibration();
+
+            // Second attempt, call 1: replays script[0] (confident 220Hz),
+            // 300ms elapsed - well under the 3000ms window. If
+            // restartCalibration() had forgotten to reset TonicCalibrator's
+            // internal state, TonicCalibrator::processFrame() is idempotent
+            // once its window has closed (see TonicCalibrator.cpp) and this
+            // would incorrectly still read the stale Timeout instead of a
+            // fresh InProgress - this is the critical regression-catching
+            // assertion.
+            auto afterRestart = pipeline.process (block.data(), block.size());
+            expect (afterRestart.phase == PitchPipelinePhase::Calibrating);
+            expect (afterRestart.calibrationStatus == CalibrationStatus::InProgress);
+
+            // Second attempt, calls 2-10: replay script[1..9] - the same 8
+            // confident + 1 unvoiced tail as the first attempt (call 1 above
+            // already consumed script[0]) - proving a full second
+            // calibration attempt can run to completion after a restart, not
+            // just that the state got cleared.
+            PitchPipelineUpdate secondUpdate { PitchPipelinePhase::Calibrating };
+            for (int i = 0; i < 9; ++i)
+                secondUpdate = pipeline.process (block.data(), block.size());
+            expect (secondUpdate.phase == PitchPipelinePhase::Calibrating);
+            expect (secondUpdate.calibrationStatus == CalibrationStatus::Timeout);
         }
 
         beginTest ("End-to-end: PitchPipeline calibrates and tracks live pitch using the real CrepePitchEngine");

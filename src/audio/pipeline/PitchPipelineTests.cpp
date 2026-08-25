@@ -214,7 +214,10 @@ public:
             expect (update.calibrationStatus == CalibrationStatus::Success);
 
             // One more block of the same tone should now be Live-phase and resolve to Sa.
-            auto liveUpdate = pipeline.process (sine.data(), 1024);
+            // Feed 2048 samples (two full CREPE windows) in this single call to exercise
+            // PitchPipeline's Live-phase handling against CrepePitchEngine's
+            // multi-window-draining behavior, which no prior test covered.
+            auto liveUpdate = pipeline.process (sine.data(), 2048);
             expect (liveUpdate.phase == PitchPipelinePhase::Live);
             expect (liveUpdate.swarLabel.has_value());
             if (liveUpdate.swarLabel.has_value())

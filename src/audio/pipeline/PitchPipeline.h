@@ -10,7 +10,7 @@ enum class PitchPipelinePhase { Calibrating, Live };
 
 struct PitchPipelineUpdate
 {
-    PitchPipelinePhase phase;
+    PitchPipelinePhase phase = PitchPipelinePhase::Calibrating;
     CalibrationStatus calibrationStatus = CalibrationStatus::InProgress;
     std::optional<SwarLabel> swarLabel;
     std::optional<float> centsFromSa;

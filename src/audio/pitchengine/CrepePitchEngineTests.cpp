@@ -161,6 +161,7 @@ public:
             expect (frame.frequencyHz.has_value());
             if (frame.frequencyHz.has_value())
                 expectWithinAbsoluteError (*frame.frequencyHz, 220.0f, 5.0f);
+            expectEquals ((long long) frame.timestampMs, (long long) 192);
         }
 
         beginTest ("Timestamps advance in fixed 64ms increments per window, independent of call granularity");

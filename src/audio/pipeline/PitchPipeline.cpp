@@ -17,6 +17,7 @@ PitchPipelineUpdate PitchPipeline::handleCalibrating (const float* audioFrame, s
     if (result.status == CalibrationStatus::Success && result.saHz.has_value())
     {
         saHz = *result.saHz;
+        update.saHz = saHz;
         phase = PitchPipelinePhase::Live;
         // Report this call as still Calibrating/Success - the FIRST Live
         // frame is produced on the NEXT process() call, so this call's audio

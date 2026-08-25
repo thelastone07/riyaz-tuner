@@ -68,6 +68,15 @@ target_compile_definitions(riyaaz_worker PUBLIC
     JUCE_STANDALONE_APPLICATION=1
 )
 
+add_library(riyaaz_tanpura STATIC
+    src/audio/tanpura/KarplusStrongString.cpp
+)
+target_include_directories(riyaaz_tanpura PUBLIC src)
+target_link_libraries(riyaaz_tanpura PUBLIC juce::juce_core)
+target_compile_definitions(riyaaz_tanpura PUBLIC
+    JUCE_STANDALONE_APPLICATION=1
+)
+
 juce_add_console_app(riyaaz_tests PRODUCT_NAME "Riyaaz Tests")
 target_sources(riyaaz_tests PRIVATE
     src/audio/swarmap/SwarMapperTests.cpp
@@ -77,6 +86,7 @@ target_sources(riyaaz_tests PRIVATE
     src/audio/calibration/TonicCalibratorTests.cpp
     src/audio/pipeline/PitchPipelineTests.cpp
     src/audio/worker/PitchWorkerTests.cpp
+    src/audio/tanpura/KarplusStrongStringTests.cpp
     src/ui/PitchGraphComponent.cpp
     src/ui/PitchGraphPointBufferTests.cpp
     src/TestMain.cpp
@@ -99,6 +109,7 @@ target_link_libraries(riyaaz_tests PRIVATE
     riyaaz_calibration
     riyaaz_pipeline
     riyaaz_worker
+    riyaaz_tanpura
     juce::juce_core
     juce::juce_gui_basics
 )

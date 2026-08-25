@@ -2,6 +2,28 @@
 
 Deferred, non-blocking items. Not urgent, but shouldn't get silently lost.
 
+## From RealtimeApp final-review fix-wave re-review (2026-08-25, commit 52324b1)
+
+- **`~PitchWorker`'s message-thread `jassert` documents a contract that isn't
+  actually guaranteed by every caller.** `MainComponent::releaseResources()`
+  owns and destroys the `PitchWorker`, and JUCE calls `releaseResources()`
+  from `prepareToPlay()`/`audioDeviceStopped()`, which run on the audio
+  device's own thread, not the message thread. `prepareToPlay()` runs a
+  second time (after the app's initial startup) only if the default audio
+  device changes while the app is open — no device-switch UI exists in v1,
+  so this is currently untriggered in normal use, not unreachable. The
+  normal app-close path (`~MainComponent` -> `shutdownAudio()`) does run on
+  the message thread and is safe. Two ways to actually close this, not just
+  document it: (a) marshal `releaseResources()`'s worker teardown onto the
+  message thread (e.g. via `MessageManager::callAsync` + a blocking wait for
+  it to complete before `prepareToPlay()` proceeds), or (b) make the
+  pending-update handoff itself safe to race against destruction (e.g. a
+  shared `std::atomic<bool> alive` flag that `handleAsyncUpdate()` checks
+  before touching `listener`, set to false as the first step of
+  `~PitchWorker()` under the same lock `latestUpdate` already uses). Worth
+  fixing for real once the app grows a device-selector UI, which is exactly
+  the change that makes this reachable.
+
 ## From PitchPipeline plan final review (2026-08-18, commits f61a18e..55840e9) — for the next plan (real-time audio + GUI wiring)
 
 - **`PitchPipelineUpdate` is under-specified for its stated job as the single

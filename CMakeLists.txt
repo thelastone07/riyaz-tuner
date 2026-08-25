@@ -103,3 +103,24 @@ target_link_libraries(riyaaz_tests PRIVATE
     juce::juce_gui_basics
 )
 riyaaz_copy_onnxruntime_dll(riyaaz_tests)
+
+juce_add_gui_app(riyaaz_app PRODUCT_NAME "Riyaaz")
+target_sources(riyaaz_app PRIVATE
+    src/app/MainComponent.cpp
+    src/app/Main.cpp
+    # PitchGraphComponent has no dedicated riyaaz_* library target of its own
+    # (it's currently only ever compiled as a loose source, directly into
+    # riyaaz_tests above) - MainComponent.h uses it as a member, so its .cpp
+    # must be compiled into riyaaz_app too, or the linker can't find its
+    # constructor/addPoint()/paint() symbols.
+    src/ui/PitchGraphComponent.cpp
+)
+target_link_libraries(riyaaz_app PRIVATE
+    riyaaz_pipeline
+    riyaaz_pitchengine
+    riyaaz_worker
+    riyaaz_swarmap
+    juce::juce_audio_utils
+    juce::juce_gui_extra
+)
+riyaaz_copy_onnxruntime_dll(riyaaz_app)

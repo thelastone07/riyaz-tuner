@@ -222,6 +222,27 @@ public:
             expect (liveUpdate.swarLabel.has_value());
             if (liveUpdate.swarLabel.has_value())
                 expectEquals ((int) liveUpdate.swarLabel->swar, (int) Swar::Sa);
+
+            // timestampMs propagation: by this call, the 16 calibration calls
+            // above (each one full 1024-sample window, at the matching
+            // 16kHz sample rate so no resampling occurs) have already
+            // consumed 16384 resampled samples = 1024ms. This call's 2048
+            // samples drain TWO windows - the first starting at 1024ms, the
+            // second (the one PitchPipeline::handleLive() keeps, per
+            // CrepePitchEngine::processFrame()'s "keep only the latest"
+            // draining behavior) starting at (16384+1024)/16000*1000 =
+            // 1088ms.
+            expectEquals ((long long) liveUpdate.timestampMs, (long long) 1088);
+
+            // One more window (1024 samples = 64ms of CrepePitchEngine's
+            // fixed per-window step) later, the timestamp should have moved
+            // forward by exactly that much - concretely, not just "some
+            // increase" - regardless of whether this particular frame turns
+            // out voiced or unvoiced (timestampMs is populated either way).
+            auto nextLiveUpdate = pipeline.process (sine.data(), 1024);
+            expect (nextLiveUpdate.phase == PitchPipelinePhase::Live);
+            expectEquals ((long long) nextLiveUpdate.timestampMs, (long long) 1152);
+            expect (nextLiveUpdate.timestampMs > liveUpdate.timestampMs);
         }
     }
 };

@@ -33,6 +33,7 @@ PitchPipelineUpdate PitchPipeline::handleLive (const float* audioFrame, size_t n
     update.saHz = saHz;
 
     PitchFrame frame = engine.processFrame (audioFrame, numSamples);
+    update.timestampMs = frame.timestampMs;
 
     if (! frame.frequencyHz.has_value())
         return update; // unvoiced - do NOT call swarMapper.update(), preserving its hysteresis lock

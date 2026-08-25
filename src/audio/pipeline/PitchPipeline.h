@@ -15,6 +15,7 @@ struct PitchPipelineUpdate
     std::optional<SwarLabel> swarLabel;
     std::optional<float> centsFromSa;
     float saHz = 0.0f;
+    uint64_t timestampMs = 0; // from PitchFrame::timestampMs during Live phase; 0 during Calibrating
 };
 
 class PitchPipeline

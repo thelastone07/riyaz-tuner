@@ -2,6 +2,78 @@
 
 Deferred, non-blocking items. Not urgent, but shouldn't get silently lost.
 
+## From PitchPipeline plan final review (2026-08-18, commits f61a18e..55840e9) — for the next plan (real-time audio + GUI wiring)
+
+- **`PitchPipelineUpdate` is under-specified for its stated job as the single
+  GUI-facing output.** It drops `PitchFrame::timestampMs` (the exact value
+  Task 2 of this plan spent fixing to advance in predictable 64ms steps -
+  needed for a live pitch graph's x-axis) and `PitchFrame::confidence`.
+  Neither is surfaced anywhere on `PitchPipelineUpdate`. Add both fields and
+  populate them in `handleLive()` before wiring the graph.
+- **No engine-health signal reaches `PitchPipelineUpdate`.** If the injected
+  engine's `prepare()` failed (e.g. missing model file), `processFrame()`
+  returns unvoiced forever, calibration silently reports `Timeout` after the
+  window closes, and there is no way to distinguish "user was silent" from
+  "the model file is missing" without the caller separately polling
+  `engine.getStatus()` — exactly the juggling `PitchPipeline` exists to
+  remove. Add `PitchEngineStatus engineStatus = engine.getStatus();` to the
+  update struct.
+- **`PitchPipeline` has no documented threading contract, and
+  `restartCalibration()` is a concrete race.** `process()` will run on a
+  worker thread; a "Recalibrate" button lives on the JUCE message thread.
+  `phase`, `saHz`, and the owned `TonicCalibrator`/`SwarMapper`'s internal
+  state are all plain, unsynchronized members. Either document
+  single-thread-ownership (all calls, including `restartCalibration()`, must
+  be marshalled onto the same thread) or make the relevant state safe to
+  call from two threads — a decision the real-time wiring plan needs to make
+  explicitly, not discover mid-implementation.
+- **No way to recover from a stuck `PitchContinuityFilter` octave-correction
+  without discarding a valid Sa.** Per the octave-correction design tension
+  already noted below (SwarMapper final review), "sing Sa, pause, sing upper
+  Sa" can leave the engine stuck an octave low until `reset()`. Today the
+  only escape `PitchPipeline` offers is `restartCalibration()`, which throws
+  away `saHz` and forces a full 3-second re-calibration to fix what's really
+  just a tracking glitch. Add a `resetTracking()` that calls `engine.reset()`
+  + `swarMapper.reset()` while preserving `saHz` and `phase == Live`.
+- **Calibration silently discards most inference results at large block
+  sizes.** `TonicCalibrator` records at most one confident reading per
+  `PitchPipeline::process()` call, since `CrepePitchEngine::processFrame()`
+  (after the multi-window-draining fix in this plan) returns only the latest
+  of however many windows it internally drained. With the defaults
+  (`windowMs=3000`, `minConfidentReadings=10`), calibration needs at least 10
+  *calls* inside the window — i.e. the caller must feed blocks no larger than
+  ~300ms, regardless of how many CREPE inferences actually ran. Feed
+  `PitchPipeline` a single 3000ms block during calibration and it burns ~46
+  real inferences, keeps 1, and reports `Timeout`. Not a regression (the old
+  single-window engine had the same 1-reading-per-call rate), but now the
+  discarded work is real and the ceiling is undocumented. Minimum: document
+  the block-size ceiling on `PitchPipeline`'s constructor. Better: give
+  `PitchEngine::processFrame()` a way to yield ALL frames from one call (an
+  out-vector or callback), which would also fix the pitch-graph frame-drop
+  gap above and make transient `InferenceError`s observable instead of being
+  silently overwritten by a later window's success within the same call.
+- Minor: timestamp arithmetic in `CrepePitchEngine` is `(uint64_t)((double)
+  n / 16000.0 * 1000.0)` — empirically exact at every window count checked,
+  but not provably exact due to double rounding. `n * 1000ULL / 16000ULL` is
+  exact by construction and free; swap it in next time that code is touched.
+- Minor: `PitchPipeline`'s `sampleRate` member is stored but never read after
+  construction, and there's no check that it actually matches the rate
+  `engine.prepare()` was given — a mismatch would silently corrupt
+  calibration timing. Either drop the member or spend it on a validation
+  `jassert`.
+- Minor: no `jassert` guards the invariant that `CalibrationStatus::Success`
+  always pairs with a non-nullopt `saHz` (true today per `TonicCalibrator`'s
+  own contract, but unasserted — if it ever broke, `phase` would never
+  advance and the caller would see `Success` with `saHz == 0` forever,
+  silently).
+- Minor (test hygiene, not a code defect): the end-to-end `PitchPipeline`
+  test's calibration-phase assertion is coupled to real ONNX inference
+  reaching its 10th confident reading on exactly the final (16th) chunk —
+  passes today, but is brittle against any future change to model behavior,
+  timing constants, or hop rate. Worth a comment noting the coupling, or
+  restructuring to check calibration success as soon as it happens rather
+  than only after the fixed loop count.
+
 ## From PitchPipeline plan, Task 2 review (2026-08-18, commit 9117332)
 
 - `CrepePitchEngine::processFrame()`'s resample step truncates the fractional

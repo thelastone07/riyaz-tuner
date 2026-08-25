@@ -14,9 +14,18 @@ PitchWorker::PitchWorker (PitchPipeline& pipelineIn, Listener& listenerIn, int f
 PitchWorker::~PitchWorker()
 {
     // Real contract: a PitchWorker MUST be destroyed on the message thread -
-    // the same thread that runs handleAsyncUpdate(). All current callers
-    // (MainComponent's destructor / releaseResources(), and the unit tests)
-    // already satisfy this; the assertion documents and enforces it.
+    // the same thread that runs handleAsyncUpdate(). This assertion documents
+    // that requirement, but it is NOT satisfied by every current caller: JUCE
+    // calls AudioAppComponent::releaseResources() (which owns this object)
+    // from prepareToPlay()/audioDeviceStopped(), and those run on the audio
+    // device's own thread, not the message thread - JUCE does not guarantee
+    // otherwise. In this app, prepareToPlay() only runs a second time if the
+    // default audio device changes while the app is open (no device-switch
+    // UI exists in v1, so this is untriggered in normal use, not
+    // unreachable). The normal app-close path (~MainComponent -> shutdownAudio())
+    // does run on the message thread and is safe. See TODOS.md for the
+    // proper fix (marshal worker teardown onto the message thread, or make
+    // the pending-update handoff itself safe to race against destruction).
     jassert (juce::MessageManager::getInstance()->isThisTheMessageThread());
 
     stop();

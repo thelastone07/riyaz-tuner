@@ -71,9 +71,10 @@ target_compile_definitions(riyaaz_worker PUBLIC
 add_library(riyaaz_tanpura STATIC
     src/audio/tanpura/KarplusStrongString.cpp
     src/audio/tanpura/TanpuraSynth.cpp
+    src/audio/tanpura/TanpuraAudioSource.cpp
 )
 target_include_directories(riyaaz_tanpura PUBLIC src)
-target_link_libraries(riyaaz_tanpura PUBLIC juce::juce_core)
+target_link_libraries(riyaaz_tanpura PUBLIC juce::juce_core juce::juce_audio_basics)
 target_compile_definitions(riyaaz_tanpura PUBLIC
     JUCE_STANDALONE_APPLICATION=1
 )
@@ -89,6 +90,7 @@ target_sources(riyaaz_tests PRIVATE
     src/audio/worker/PitchWorkerTests.cpp
     src/audio/tanpura/KarplusStrongStringTests.cpp
     src/audio/tanpura/TanpuraSynthTests.cpp
+    src/audio/tanpura/TanpuraAudioSourceTests.cpp
     src/ui/PitchGraphComponent.cpp
     src/ui/PitchGraphPointBufferTests.cpp
     src/TestMain.cpp

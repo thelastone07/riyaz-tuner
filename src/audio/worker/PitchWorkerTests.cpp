@@ -50,7 +50,14 @@ public:
             PitchPipeline pipeline (engine, 44100.0);
 
             CapturingListener listener;
-            PitchWorker worker (pipeline, listener);
+            // Four seconds of FIFO headroom - comfortably more than the
+            // ~3 seconds of audio this test pushes below - so a worker-thread
+            // scheduling hiccup between two pushes can never cause the FIFO
+            // to drop samples. That drop behaviour is correct under real
+            // backpressure, but here it would corrupt this test's timing
+            // assumptions (all 132300 samples across 10 pushes must actually
+            // reach the calibrator to close the 3000ms window as expected).
+            PitchWorker worker (pipeline, listener, 44100 * 4);
             worker.start();
 
             std::vector<float> block (44100 * 300 / 1000, 0.0f); // 300ms, matches the project's established test convention

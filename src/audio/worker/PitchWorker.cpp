@@ -8,11 +8,21 @@ PitchWorker::PitchWorker (PitchPipeline& pipelineIn, Listener& listenerIn, int f
       fifo (fifoCapacitySamples), fifoBuffer ((size_t) fifoCapacitySamples),
       drainScratch ((size_t) fifoCapacitySamples)
 {
+    jassert (fifoCapacitySamples > 0);
 }
 
 PitchWorker::~PitchWorker()
 {
     stop();
+    // stop() joins the worker thread, but a triggerAsyncUpdate() issued just
+    // before that join may still be pending in the message queue. If it were
+    // left pending and the message thread dispatched it after this
+    // destructor's body starts running (e.g. torn down from a non-message
+    // thread, like an audio-device teardown callback), handleAsyncUpdate()
+    // would fire on a partially-destroyed - or already destroyed - object.
+    // Cancel it explicitly now that the worker thread can no longer post
+    // another one.
+    cancelPendingUpdate();
 }
 
 void PitchWorker::pushAudio (const float* samples, int numSamples)
@@ -51,8 +61,12 @@ void PitchWorker::run()
 {
     while (! threadShouldExit())
     {
-        wait (100.0); // wake on notify(), or periodically as a safety net
-
+        // Check the FIFO before waiting so audio pushed between construction
+        // and this thread's first loop iteration (or between the previous
+        // drain and threadShouldExit() becoming true) is drained immediately
+        // instead of sitting for up to the full 100ms wait() timeout. This
+        // doesn't change steady-state behaviour: once drained, the loop still
+        // falls through to wait() and blocks until notify() or the timeout.
         while (fifo.getNumReady() > 0 && ! threadShouldExit())
         {
             auto readHandle = fifo.read (fifo.getNumReady());
@@ -81,6 +95,9 @@ void PitchWorker::run()
             }
             triggerAsyncUpdate();
         }
+
+        if (! threadShouldExit())
+            wait (100.0); // wake on notify(), or periodically as a safety net
     }
 }
 

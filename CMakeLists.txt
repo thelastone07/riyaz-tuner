@@ -59,6 +59,25 @@ target_compile_definitions(riyaaz_pipeline PUBLIC
     JUCE_STANDALONE_APPLICATION=1
 )
 
+add_library(riyaaz_worker STATIC
+    src/audio/worker/PitchWorker.cpp
+)
+target_include_directories(riyaaz_worker PUBLIC src)
+target_link_libraries(riyaaz_worker PUBLIC riyaaz_pipeline juce::juce_core juce::juce_events)
+target_compile_definitions(riyaaz_worker PUBLIC
+    JUCE_STANDALONE_APPLICATION=1
+    # Required for juce::MessageManager::runDispatchLoopUntil(), which
+    # PitchWorkerTests.cpp uses to pump the message loop so AsyncUpdater
+    # callbacks are actually delivered in the console test runner (see
+    # Step 4 investigation in task-1-report.md). JUCE 8.0.7 defaults this to
+    # 0 (juce_PlatformDefs.h) unless a target defines it; riyaaz_worker is
+    # where juce_events' implementation gets compiled (riyaaz_tests links
+    # riyaaz_worker rather than juce::juce_events directly), so the
+    # definition has to live here, PUBLIC, so the declaration and the
+    # compiled-in implementation stay consistent.
+    JUCE_MODAL_LOOPS_PERMITTED=1
+)
+
 juce_add_console_app(riyaaz_tests PRODUCT_NAME "Riyaaz Tests")
 target_sources(riyaaz_tests PRIVATE
     src/audio/swarmap/SwarMapperTests.cpp
@@ -67,6 +86,7 @@ target_sources(riyaaz_tests PRIVATE
     src/audio/pitchengine/CrepePitchEngineTests.cpp
     src/audio/calibration/TonicCalibratorTests.cpp
     src/audio/pipeline/PitchPipelineTests.cpp
+    src/audio/worker/PitchWorkerTests.cpp
     src/TestMain.cpp
 )
 target_link_libraries(riyaaz_tests PRIVATE
@@ -74,6 +94,7 @@ target_link_libraries(riyaaz_tests PRIVATE
     riyaaz_pitchengine
     riyaaz_calibration
     riyaaz_pipeline
+    riyaaz_worker
     juce::juce_core
 )
 riyaaz_copy_onnxruntime_dll(riyaaz_tests)

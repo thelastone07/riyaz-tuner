@@ -14,6 +14,7 @@ public:
     bool isRinging() const;
 
 private:
+    static constexpr float kMinFrequencyHz = 20.0f; // Guard against division-by-zero
     static constexpr float kDamping = 0.996f;
     static constexpr int kMaxRingSamples = 44100 * 4; // ~4s upper bound - real decay is usually faster
 

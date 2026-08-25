@@ -4,7 +4,8 @@
 
 void KarplusStrongString::pluck (float frequencyHz, double sampleRateIn, float amplitude)
 {
-    const int delayLineLength = juce::jmax (2, (int) std::lround (sampleRateIn / (double) frequencyHz));
+    const float clampedFrequency = juce::jmax (kMinFrequencyHz, frequencyHz);
+    const int delayLineLength = juce::jmax (2, (int) std::lround (sampleRateIn / (double) clampedFrequency));
     delayLine.assign ((size_t) delayLineLength, 0.0f);
 
     for (auto& sample : delayLine)

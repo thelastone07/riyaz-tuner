@@ -67,6 +67,17 @@ public:
             expect (! str.isRinging());
             expectWithinAbsoluteError (str.renderNextSample(), 0.0f, 0.0001f);
         }
+
+        beginTest ("pluck() with a non-positive frequency doesn't crash (clamped to a safe minimum)");
+        {
+            KarplusStrongString str;
+            str.pluck (0.0f, 44100.0, 1.0f);
+            expect (str.isRinging());
+            // Just confirm it renders without crashing - the exact pitch produced
+            // by the clamp isn't the point of this test, safety is.
+            for (int i = 0; i < 100; ++i)
+                str.renderNextSample();
+        }
     }
 };
 

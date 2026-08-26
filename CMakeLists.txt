@@ -79,6 +79,15 @@ target_compile_definitions(riyaaz_tanpura PUBLIC
     JUCE_STANDALONE_APPLICATION=1
 )
 
+add_library(riyaaz_metronome STATIC
+    src/audio/metronome/TaalPattern.cpp
+)
+target_include_directories(riyaaz_metronome PUBLIC src)
+target_link_libraries(riyaaz_metronome PUBLIC juce::juce_core)
+target_compile_definitions(riyaaz_metronome PUBLIC
+    JUCE_STANDALONE_APPLICATION=1
+)
+
 juce_add_console_app(riyaaz_tests PRODUCT_NAME "Riyaaz Tests")
 target_sources(riyaaz_tests PRIVATE
     src/audio/swarmap/SwarMapperTests.cpp
@@ -91,6 +100,7 @@ target_sources(riyaaz_tests PRIVATE
     src/audio/tanpura/KarplusStrongStringTests.cpp
     src/audio/tanpura/TanpuraSynthTests.cpp
     src/audio/tanpura/TanpuraAudioSourceTests.cpp
+    src/audio/metronome/TaalPatternTests.cpp
     src/ui/PitchGraphComponent.cpp
     src/ui/PitchGraphPointBufferTests.cpp
     src/TestMain.cpp
@@ -114,6 +124,7 @@ target_link_libraries(riyaaz_tests PRIVATE
     riyaaz_pipeline
     riyaaz_worker
     riyaaz_tanpura
+    riyaaz_metronome
     juce::juce_core
     juce::juce_gui_basics
 )

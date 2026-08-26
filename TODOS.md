@@ -2,6 +2,55 @@
 
 Deferred, non-blocking items. Not urgent, but shouldn't get silently lost.
 
+## From the Metronome final-review fix wave (2026-08-25)
+
+Deferred out of the fix wave that closed 3 Important + 2 Minor findings from
+the whole-branch metronome review (commits `0c42e4e..f551968`). Two items
+the review scoped to a later plan, plus one residual from the amplitude fix
+that landed in the fix wave.
+
+- **Metronome is silent (with no explanation) on a device with no microphone
+  input.** `MainComponent`'s `setAudioChannels(1, 2)` means that on the path
+  the app already anticipates — `getCurrentAudioDevice() == nullptr`, "No
+  microphone found" — nothing ever calls `getNextAudioBlock()`, so the
+  metronome (despite being independent of pitch calibration in every other
+  respect) produces no sound and no error even if the user presses Start.
+  In practice JUCE usually still opens the default output device with 0
+  input channels rather than returning null, so this may never actually
+  trigger — but nobody scoped "what does the metronome need to work"
+  separately from "what does the pitch tracker need." Proper fix: fall back
+  to `setAudioChannels(0, 2)` when the 1-input attempt yields no device, or
+  disable the metronome controls and say so in `statusLabel` on that path.
+  **Flagged by the final reviewer as Packaging-plan scope.**
+- **`MetronomeClickTests.cpp`'s frequency-accuracy test uses a bounded local
+  Goertzel search (`target ± 30Hz`) rather than a global peak search.** It
+  currently still catches a grossly-wrong frequency only because the
+  sidelobe magnitude happens to be monotonic across that narrow window and
+  the argmax pins to the band edge — correct today, but fragile: it depends
+  on the 30Hz search radius staying larger in cents than the 30-cent
+  tolerance at every target frequency (already thin at 1200Hz, where 30Hz is
+  only ~43 cents). Proper fix: add a ratio assertion alongside the existing
+  one (the magnitude at the measured peak should exceed the magnitude at
+  `2*target` and `0.5*target` by a comfortable factor), making "the peak is
+  really here" an assertion instead of an assumption.
+- **Residual clipping risk after the Sam-amplitude headroom fix.** The fix
+  wave dropped `MetronomeClick`'s amplitudes ~30% (Sam 1.00→0.70, etc.) to
+  restore headroom against the tanpura's default gain (0.5), but a tanpura
+  gain pushed toward its own max (1.0) can still sum with Sam past full
+  scale. The proper fix — a real mixer/limiter stage across the tanpura and
+  metronome outputs — was explicitly out of scope for the metronome plan;
+  this note exists so the next audio-mixing-touching plan doesn't have to
+  rediscover it from scratch.
+- **Two comment-wording nits from the fix wave's re-review**, non-blocking:
+  `MetronomeAudioSourceTests.cpp`'s new "does the disabled block reset"
+  test's comment overclaims a discriminating power the test doesn't
+  actually have for the underlying race (a two-thread interleaving,
+  correctly undiscriminable single-threaded — the limitation is disclosed
+  honestly in the fix report and commit message, just not in the test file
+  itself); and `MetronomeAudioSource.cpp`'s surviving "unconditionally
+  consumed" comment on the flag-exchange lines now only applies past the
+  `enabled` gate, reading oddly directly beneath that branch.
+
 ## From the Tanpura final-review fix wave (2026-08-25)
 
 Deferred out of the fix wave that closed the four Important findings from the

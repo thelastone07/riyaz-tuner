@@ -1,6 +1,18 @@
 // src/app/MainComponent.cpp
 #include "MainComponent.h"
 
+TaalType MainComponent::taalTypeForComboId (int comboId)
+{
+    switch (comboId)
+    {
+        case 1: return TaalType::PlainClick;
+        case 2: return TaalType::Teentaal;
+        case 3: return TaalType::Jhaptaal;
+        case 4: return TaalType::Ektaal;
+        default: jassertfalse; return TaalType::PlainClick; // unreachable - the combo box only ever offers ids 1-4
+    }
+}
+
 MainComponent::MainComponent()
 {
     addAndMakeVisible (statusLabel);
@@ -34,9 +46,55 @@ MainComponent::MainComponent()
     // restarts without being re-sent.
     tanpuraSource.setGain ((float) tanpuraVolumeSlider.getValue());
 
+    addAndMakeVisible (metronomeTaalCombo);
+    metronomeTaalCombo.addItem ("Plain click", 1);
+    metronomeTaalCombo.addItem ("Teentaal (16)", 2);
+    metronomeTaalCombo.addItem ("Jhaptaal (10)", 3);
+    metronomeTaalCombo.addItem ("Ektaal (12)", 4);
+    metronomeTaalCombo.setSelectedId (1, juce::dontSendNotification);
+    metronomeTaalCombo.onChange = [this]
+    {
+        const auto type = taalTypeForComboId (metronomeTaalCombo.getSelectedId());
+        metronomeSource.setTaal (type);
+        beatIndicator.setTaal (type);
+    };
+
+    addAndMakeVisible (metronomeBpmSlider);
+    metronomeBpmSlider.setRange (20.0, 300.0, 1.0);
+    metronomeBpmSlider.setValue (80.0, juce::dontSendNotification);
+    metronomeBpmSlider.onValueChange = [this]
+    {
+        metronomeSource.setBpm ((float) metronomeBpmSlider.getValue());
+    };
+
+    addAndMakeVisible (metronomeBpmLabel);
+    metronomeBpmLabel.setText ("Metronome BPM", juce::dontSendNotification);
+    metronomeBpmLabel.attachToComponent (&metronomeBpmSlider, true);
+
+    addAndMakeVisible (metronomeStartStopButton);
+    metronomeStartStopButton.setButtonText ("Start metronome");
+    metronomeStartStopButton.onClick = [this]
+    {
+        metronomeRunning = ! metronomeRunning;
+        metronomeSource.setEnabled (metronomeRunning);
+        metronomeStartStopButton.setButtonText (metronomeRunning ? "Stop metronome" : "Start metronome");
+    };
+
+    // Push the initial BPM/taal into the source here, on the message
+    // thread, while the audio device is still closed - same reasoning as
+    // the tanpura gain push above (prepareToPlay() is an audio-device
+    // callback, not guaranteed to run on the message thread). The
+    // metronome starts disabled (metronomeRunning defaults to false), so
+    // this has no audible effect until Start is pressed.
+    metronomeSource.setBpm ((float) metronomeBpmSlider.getValue());
+    metronomeSource.setTaal (taalTypeForComboId (metronomeTaalCombo.getSelectedId()));
+    beatIndicator.setTaal (taalTypeForComboId (metronomeTaalCombo.getSelectedId()));
+
+    addAndMakeVisible (beatIndicator);
+
     addAndMakeVisible (pitchGraph);
 
-    setSize (600, 400);
+    setSize (600, 500);
 
     // Mono input (mic) plus STEREO output: the tanpura drone is rendered into
     // the output channels. See getNextAudioBlock() for why this channel count
@@ -76,6 +134,13 @@ void MainComponent::prepareToPlay (int samplesPerBlockExpected, double sampleRat
     // function returns early. (It stays silent until calibration enables it, so
     // preparing it early has no audible effect.)
     tanpuraSource.prepareToPlay (samplesPerBlockExpected, sampleRate);
+
+    // Same reasoning as tanpuraSource immediately above: getNextAudioBlock()
+    // will call this unconditionally on every path, including the ones
+    // where engine.prepare() fails below, so this must always be prepared.
+    // It stays silent (disabled) until Start is pressed, so preparing it
+    // early has no audible effect.
+    metronomeSource.prepareToPlay (samplesPerBlockExpected, sampleRate);
 
     // engine.prepare() below restarts CrepePitchEngine's internal timestamp
     // counter at 0, so any points still held by the graph carry timestamps
@@ -152,6 +217,13 @@ void MainComponent::getNextAudioBlock (const juce::AudioSourceChannelInfo& buffe
     // return did, back when there were zero output channels - would now leave
     // that mic copy sitting in the output buffer and play it to the speakers.
     tanpuraSource.getNextAudioBlock (bufferToFill);
+
+    // Additive, not overwriting - runs after the tanpura source above,
+    // which has already either cleared the buffer (disabled) or written
+    // every sample of every channel (enabled). Order matters: this must
+    // come after that overwrite, or its contribution would itself be
+    // overwritten.
+    metronomeSource.addNextAudioBlock (bufferToFill);
 }
 
 void MainComponent::releaseResources()
@@ -161,6 +233,7 @@ void MainComponent::releaseResources()
     worker.reset();
     pipeline.reset();
     tanpuraSource.releaseResources();
+    metronomeSource.releaseResources();
 }
 
 void MainComponent::pitchWorkerUpdate (const PitchPipelineUpdate& update)
@@ -247,6 +320,16 @@ void MainComponent::resized()
     // clamped to its owner's x, so a slider at x == 0 would leave no room and
     // the label would collapse to nothing.
     tanpuraVolumeSlider.setBounds (area.removeFromTop (30).withTrimmedLeft (80).withTrimmedRight (10));
+
+    auto metronomeControlsRow = area.removeFromTop (30);
+    metronomeTaalCombo.setBounds (metronomeControlsRow.removeFromLeft (150).reduced (2));
+    metronomeStartStopButton.setBounds (metronomeControlsRow.removeFromRight (150).reduced (2));
+
+    // Same attached-label reasoning as tanpuraVolumeSlider above, with a
+    // wider left inset since "Metronome BPM" is a longer label than "Tanpura".
+    metronomeBpmSlider.setBounds (area.removeFromTop (30).withTrimmedLeft (140).withTrimmedRight (10));
+
+    beatIndicator.setBounds (area.removeFromTop (50));
 
     pitchGraph.setBounds (area);
 }

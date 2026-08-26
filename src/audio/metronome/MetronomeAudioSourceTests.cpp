@@ -3,6 +3,14 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <cmath>
 
+namespace
+{
+    // Mirrors MetronomeClickTests.cpp - 44100 alone previously hid two real
+    // Tanpura bugs that were purely sample-rate-dependent, so the set
+    // deliberately includes a rate above 48000.
+    constexpr double kTestSampleRates[] = { 44100.0, 48000.0, 96000.0 };
+}
+
 class MetronomeAudioSourceTests : public juce::UnitTest
 {
 public:
@@ -118,36 +126,65 @@ public:
             source.releaseResources();
         }
 
-        beginTest ("A BPM change takes effect on the NEXT beat boundary, not the one already in progress");
+        // This is the file's strongest rate-plumbing guard: it asserts exact
+        // beat-index transitions two-sidedly, so it pins down WHEN a beat
+        // boundary falls, not merely that beats happen. Since
+        // MetronomeAudioSource's entire job is sample-rate-derived timing
+        // (samplesPerBeat = sampleRate * 60 / bpm) - and sampleRate has an
+        // in-class default of 44100.0 - a 44100-only version of this test
+        // would still pass if prepareToPlay() ever stopped storing the rate,
+        // while the shipped app ran at the wrong tempo and the wrong click
+        // pitch on every 48kHz device. Every expected block count below is
+        // DERIVED from the rate rather than hardcoded, so the rate has to be
+        // genuinely plumbed through for these to hold.
+        for (const double sampleRate : kTestSampleRates)
         {
-            MetronomeAudioSource source;
-            source.prepareToPlay (512, 44100.0);
-            source.setTaal (TaalType::Teentaal);
-            source.setBpm (80.0f); // samplesPerBeat = 44100*60/80 = 33075
-            source.setEnabled (true);
+            beginTest (juce::String ("A BPM change takes effect on the NEXT beat boundary, not the one already"
+                                     " in progress, at ") + juce::String (sampleRate, 0) + "Hz");
+            {
+                MetronomeAudioSource source;
+                source.prepareToPlay (512, sampleRate);
+                source.setTaal (TaalType::Teentaal);
+                source.setBpm (80.0f);
+                source.setEnabled (true);
 
-            juce::AudioBuffer<float> buffer (2, 512);
-            juce::AudioSourceChannelInfo info (&buffer, 0, 512);
+                // e.g. at 44100Hz: 33075 samples/beat at 80 BPM, 8820 at 300 BPM.
+                const double samplesPerBeatOld = sampleRate * 60.0 / 80.0;
+                const double samplesPerBeatNew = sampleRate * 60.0 / 300.0;
 
-            source.addNextAudioBlock (info); // resetClock() fires here: beat 0 starts at 80 BPM (33075 samples/beat)
-            source.setBpm (300.0f);          // speed up mid-beat-0; must NOT shorten the beat already in progress
+                // Blocks needed for the cumulative sample count to reach each
+                // boundary. (blocksToCrossOld - 1) blocks is provably still
+                // short of it, which is what makes the assertion two-sided.
+                const int blocksToCrossOld = (int) std::ceil (samplesPerBeatOld / 512.0);
+                const int blocksToCrossNew = (int) std::ceil (samplesPerBeatNew / 512.0);
 
-            // 64 more blocks (65 total) = 33280 samples, just past the
-            // 80-BPM beat-0 boundary (33075) - beat index must become 1,
-            // and only THEN is the new, faster 300-BPM tempo (8820
-            // samples/beat) read for beat 1.
-            for (int block = 0; block < 64; ++block)
+                juce::AudioBuffer<float> buffer (2, 512);
+                juce::AudioSourceChannelInfo info (&buffer, 0, 512);
+
+                source.addNextAudioBlock (info); // resetClock() fires here: beat 0 starts at 80 BPM
+                source.setBpm (300.0f);          // speed up mid-beat-0; must NOT shorten the beat already in progress
+
+                // Stop one block SHORT of the 80-BPM beat-0 boundary. If the
+                // BPM change had (wrongly) shortened the beat in progress,
+                // the index would already have advanced by now.
+                for (int block = 0; block < blocksToCrossOld - 2; ++block)
+                    source.addNextAudioBlock (info);
+                expectEquals (source.getCurrentBeatIndex(), 0);
+
+                // One more block crosses it - beat index becomes 1, and only
+                // THEN is the new, faster 300-BPM tempo read for beat 1.
                 source.addNextAudioBlock (info);
-            expectEquals (source.getCurrentBeatIndex(), 1);
+                expectEquals (source.getCurrentBeatIndex(), 1);
 
-            // 18 more blocks = 9216 samples, comfortably past 8820 (beat 1's
-            // new, faster duration) but nowhere close to another 33075 -
-            // only reachable if the BPM change actually took effect.
-            for (int block = 0; block < 18; ++block)
-                source.addNextAudioBlock (info);
-            expectEquals (source.getCurrentBeatIndex(), 2);
+                // Enough blocks to clear beat 1's new, faster duration but
+                // nowhere near another 80-BPM beat - only reachable if the
+                // BPM change actually took effect.
+                for (int block = 0; block < blocksToCrossNew; ++block)
+                    source.addNextAudioBlock (info);
+                expectEquals (source.getCurrentBeatIndex(), 2);
 
-            source.releaseResources();
+                source.releaseResources();
+            }
         }
 
         beginTest ("PlainClick taal keeps the beat index at 0 across many blocks (single-beat cycle)");

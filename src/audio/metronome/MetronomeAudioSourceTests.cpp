@@ -277,8 +277,13 @@ public:
                 }
             }
 
-            expect (samPeak > 0.5f, "Sam (MetronomeClick amplitude 1.00) should be near full amplitude");
-            expect (khaliPeak > 0.05f, "Khali (MetronomeClick amplitude 0.45) should still be audible");
+            // Thresholds track MetronomeClick's amplitude table, which leaves
+            // ~3dB of headroom for the additive tanpura mix (Sam 0.70, Khali
+            // 0.32). The point of this test is the RATIO - that Sam and Khali
+            // are audibly different - so the absolute floors are deliberately
+            // loose; only the 1.5x ratio below is load-bearing.
+            expect (samPeak > 0.35f, "Sam (MetronomeClick amplitude 0.70) should be the loudest beat type");
+            expect (khaliPeak > 0.05f, "Khali (MetronomeClick amplitude 0.32) should still be audible");
             expect (samPeak > khaliPeak * 1.5f, "Sam should be measurably louder than Khali - proves TaalPattern's classification is actually reaching MetronomeClick, not just always rendering the same beat type");
 
             source.releaseResources();

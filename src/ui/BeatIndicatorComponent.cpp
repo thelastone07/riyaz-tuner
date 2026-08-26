@@ -34,17 +34,34 @@ juce::Colour BeatIndicatorComponent::colourFor (BeatType type) const
 void BeatIndicatorComponent::timerCallback()
 {
     const int totalBeats = source.getTotalBeatsElapsed();
+    const float previousIntensity = flashIntensity;
+    bool beatChanged = false;
+
     if (totalBeats != lastSeenTotalBeats)
     {
         lastSeenTotalBeats = totalBeats;
         flashIntensity = 1.0f;
+        beatChanged = true;
     }
     else
     {
         flashIntensity = juce::jmax (0.0f, flashIntensity - 0.12f); // decays to 0 over ~8 ticks (~0.27s at 30Hz)
     }
 
-    repaint();
+    // Only repaint when something the paint actually depends on moved. The
+    // timer runs for the component's whole lifetime, but the metronome
+    // defaults to stopped and this component is idle most of the time - once
+    // flashIntensity has decayed to 0 with no beat firing, every further
+    // repaint would be pixel-identical. This is the app's only always-on
+    // repaint loop (PitchGraphComponent has no timer and repaints only on
+    // addPoint()), so leaving it unguarded would put a permanent idle-CPU
+    // and wakeup floor under an app that previously had none.
+    //
+    // getCurrentBeatIndex() needs no separate check: the beat index cannot
+    // change without getTotalBeatsElapsed() also incrementing, since
+    // triggerBeat() advances both together.
+    if (beatChanged || flashIntensity != previousIntensity)
+        repaint();
 }
 
 void BeatIndicatorComponent::paint (juce::Graphics& g)

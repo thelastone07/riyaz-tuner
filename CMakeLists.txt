@@ -81,6 +81,7 @@ target_compile_definitions(riyaaz_tanpura PUBLIC
 
 add_library(riyaaz_metronome STATIC
     src/audio/metronome/TaalPattern.cpp
+    src/audio/metronome/MetronomeClick.cpp
 )
 target_include_directories(riyaaz_metronome PUBLIC src)
 target_link_libraries(riyaaz_metronome PUBLIC juce::juce_core)
@@ -101,6 +102,7 @@ target_sources(riyaaz_tests PRIVATE
     src/audio/tanpura/TanpuraSynthTests.cpp
     src/audio/tanpura/TanpuraAudioSourceTests.cpp
     src/audio/metronome/TaalPatternTests.cpp
+    src/audio/metronome/MetronomeClickTests.cpp
     src/ui/PitchGraphComponent.cpp
     src/ui/PitchGraphPointBufferTests.cpp
     src/TestMain.cpp

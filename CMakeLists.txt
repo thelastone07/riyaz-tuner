@@ -144,6 +144,7 @@ target_sources(riyaaz_app PRIVATE
     # must be compiled into riyaaz_app too, or the linker can't find its
     # constructor/addPoint()/paint() symbols.
     src/ui/PitchGraphComponent.cpp
+    src/ui/BeatIndicatorComponent.cpp
 )
 target_link_libraries(riyaaz_app PRIVATE
     riyaaz_pipeline
@@ -151,6 +152,7 @@ target_link_libraries(riyaaz_app PRIVATE
     riyaaz_worker
     riyaaz_swarmap
     riyaaz_tanpura
+    riyaaz_metronome
     juce::juce_audio_utils
     juce::juce_gui_extra
 )

@@ -4,9 +4,13 @@
 
 void MetronomeClick::trigger (BeatType type, double sampleRateIn)
 {
-    float frequencyHz;
-    float initialAmplitude;
-    float durationSeconds;
+    // Initialize with Plain's values as a safe fallback for corrupted/invalid enum values,
+    // matching TaalPattern.cpp's exhaustive-switch idiom. The switch below must handle all
+    // real BeatType enumerators; if a new type is added, the compiler will warn unless the
+    // switch is updated.
+    float frequencyHz = 700.0f;
+    float initialAmplitude = 0.30f;
+    float durationSeconds = 0.020f;
 
     switch (type)
     {
@@ -14,7 +18,6 @@ void MetronomeClick::trigger (BeatType type, double sampleRateIn)
         case BeatType::Clap:  frequencyHz = 900.0f;  initialAmplitude = 0.75f; durationSeconds = 0.040f; break;
         case BeatType::Khali: frequencyHz = 500.0f;  initialAmplitude = 0.45f; durationSeconds = 0.035f; break;
         case BeatType::Plain: frequencyHz = 700.0f;  initialAmplitude = 0.30f; durationSeconds = 0.020f; break;
-        default:              frequencyHz = 700.0f;  initialAmplitude = 0.30f; durationSeconds = 0.020f; break; // unreachable
     }
 
     phase = 0.0;

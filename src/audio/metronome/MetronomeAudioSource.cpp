@@ -61,6 +61,31 @@ void MetronomeAudioSource::resetClock()
 
 void MetronomeAudioSource::addNextAudioBlock (const juce::AudioSourceChannelInfo& bufferToFill)
 {
+    // resetPending must NEVER be consumed while disabled. setEnabled(true)
+    // is two separate stores on the message thread - resetPending = true,
+    // then enabled = true - and an audio callback can land between them. If
+    // this method consumed resetPending before checking enabled (as it once
+    // did), that interleaving would swallow the flag while still disabled,
+    // and the enable that follows a block later would find needsReset false
+    // and never call triggerBeat(0): Start is pressed, Sam is silent, the
+    // indicator does not light, and the cycle audibly begins on beat 2.
+    // Gating the consume on enabled removes the window entirely rather than
+    // narrowing it.
+    if (! enabled.load())
+    {
+        // A taal change still applies while stopped, so the pattern the UI
+        // draws stays in step with the one we will play - but it leaves the
+        // reset ARMED rather than performing it, since resetClock() is only
+        // meaningful for a block we are actually about to render.
+        if (taalChangePending.exchange (false))
+        {
+            pattern = TaalPattern (pendingTaalType.load());
+            resetPending = true; // still owed a reset when we next actually run
+        }
+
+        return;
+    }
+
     // Both flags are unconditionally consumed exactly once, regardless of
     // which (or both) were set - if only one branch's exchange() ran, the
     // other flag could stay pending and fire an extra, unwanted resetClock()
@@ -71,15 +96,11 @@ void MetronomeAudioSource::addNextAudioBlock (const juce::AudioSourceChannelInfo
     if (taalChanged)
         pattern = TaalPattern (pendingTaalType.load());
 
-    const bool needsReset = taalChanged || resetRequested;
-    if (needsReset)
+    if (taalChanged || resetRequested)
+    {
         resetClock();
-
-    if (! enabled.load())
-        return;
-
-    if (needsReset)
-        triggerBeat (0); // fire beat 0's click + UI update NOW, only because we're actually about to render this block
+        triggerBeat (0); // fire beat 0's click + UI update NOW - we are past the enabled gate, so this block really is about to render
+    }
 
     auto* buffer = bufferToFill.buffer;
     const int numChannels = buffer->getNumChannels();

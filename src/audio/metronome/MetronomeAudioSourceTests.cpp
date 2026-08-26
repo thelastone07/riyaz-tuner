@@ -326,6 +326,55 @@ public:
             source.releaseResources();
         }
 
+        beginTest ("While disabled, a pending taal change fires no beat but still leaves the reset armed - the first Sam is never dropped");
+        {
+            MetronomeAudioSource source;
+            source.prepareToPlay (512, 44100.0); // arms resetPending
+            source.setTaal (TaalType::Teentaal);
+            // setEnabled() NOT called - still disabled
+
+            juce::AudioBuffer<float> buffer (2, 512);
+            juce::AudioSourceChannelInfo info (&buffer, 0, 512);
+
+            const int totalBeatsBefore = source.getTotalBeatsElapsed();
+
+            // A taal change while stopped must be absorbed without firing a
+            // beat: no click, no UI counter movement. (Rendering a block with
+            // both flags armed is the case that used to advance the counter
+            // while the user believed the metronome was stopped.)
+            source.setTaal (TaalType::Jhaptaal);
+            buffer.clear();
+            source.addNextAudioBlock (info);
+
+            expectEquals (source.getTotalBeatsElapsed(), totalBeatsBefore);
+            for (int i = 0; i < 512; ++i)
+                expectWithinAbsoluteError (buffer.getSample (0, i), 0.0f, 0.0001f);
+
+            // ...but the reset it implied must still be OWED. If the disabled
+            // block had consumed resetPending instead of re-arming it, this
+            // first enabled block would find nothing pending and never call
+            // triggerBeat(0) - Start would be pressed and Sam would be silent.
+            source.setEnabled (true);
+            buffer.clear();
+            source.addNextAudioBlock (info);
+
+            expectEquals (source.getCurrentBeatIndex(), 0);
+            expectEquals (source.getTotalBeatsElapsed(), totalBeatsBefore + 1);
+
+            bool foundClick = false;
+            for (int i = 0; i < 512; ++i)
+            {
+                if (std::abs (buffer.getSample (0, i)) > 0.001f)
+                {
+                    foundClick = true;
+                    break;
+                }
+            }
+            expect (foundClick, "beat 0's Sam click must actually sound on the first enabled block");
+
+            source.releaseResources();
+        }
+
         beginTest ("Calling setEnabled(true) again while already enabled does NOT reset the beat index (only a false-to-true transition resets)");
         {
             MetronomeAudioSource source;

@@ -56,7 +56,7 @@ void MetronomeAudioSource::resetClock()
 {
     samplesIntoBeat = 0.0;
     samplesPerBeat = sampleRate * 60.0 / (double) bpm.load();
-    triggerBeat (0);
+    currentBeatIndex = 0;
 }
 
 void MetronomeAudioSource::addNextAudioBlock (const juce::AudioSourceChannelInfo& bufferToFill)
@@ -71,11 +71,15 @@ void MetronomeAudioSource::addNextAudioBlock (const juce::AudioSourceChannelInfo
     if (taalChanged)
         pattern = TaalPattern (pendingTaalType.load());
 
-    if (taalChanged || resetRequested)
+    const bool needsReset = taalChanged || resetRequested;
+    if (needsReset)
         resetClock();
 
     if (! enabled.load())
         return;
+
+    if (needsReset)
+        triggerBeat (0); // fire beat 0's click + UI update NOW, only because we're actually about to render this block
 
     auto* buffer = bufferToFill.buffer;
     const int numChannels = buffer->getNumChannels();

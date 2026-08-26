@@ -135,21 +135,46 @@ public:
         {
             for (const double sampleRate : kTestSampleRates)
             {
-                beginTest (juce::String (spec.name) + " decays to silence within its intended duration at "
-                           + juce::String (sampleRate, 0) + "Hz");
+                beginTest (juce::String (spec.name) + " sounds for exactly its intended duration at "
+                           + juce::String (sampleRate, 0) + "Hz (bounded from BOTH sides)");
                 {
                     MetronomeClick click;
                     click.trigger (spec.type, sampleRate);
 
-                    // Render past the longest possible duration (Sam's
-                    // 0.05s) with a small safety margin, regardless of which
-                    // type this is - simpler than tracking each type's own
-                    // duration here, and just as conclusive.
-                    const int renderSamples = (int) (sampleRate * 0.05) + 10;
-                    for (int i = 0; i < renderSamples; ++i)
+                    // The duration MUST be derived from the sample rate that
+                    // was passed to trigger(), so it is bounded on both sides
+                    // against THIS type's own durationSeconds - never against
+                    // a shared upper bound like the longest type's duration.
+                    //
+                    // An upper bound alone is not a timing guard: a baked-in
+                    // 44100 in the samplesRemaining calculation (the exact
+                    // shape of KarplusStrongString's kMaxRingSamples bug)
+                    // makes the click SHORTER at every rate above 44100 -
+                    // less than half its intended length at 96kHz - and a
+                    // one-sided "is it finished yet?" assertion stays green
+                    // through all of it.
+                    const int intendedSamples = (int) (sampleRate * (double) spec.durationSeconds);
+
+                    // Lower bound: still sounding just before its own
+                    // intended duration ends.
+                    for (int i = 0; i < intendedSamples - 2; ++i)
                         click.renderNextSample();
 
-                    expect (! click.isSounding());
+                    expect (click.isSounding(),
+                            juce::String (spec.name) + " at " + juce::String (sampleRate, 0)
+                                + "Hz ended BEFORE its intended duration of "
+                                + juce::String (intendedSamples) + " samples - the duration is not being"
+                                  " derived from the actual sample rate passed to trigger()");
+
+                    // Upper bound: finished just after it, and silent from
+                    // then on.
+                    for (int i = 0; i < 4; ++i) // (intendedSamples - 2) + 4 = intendedSamples + 2
+                        click.renderNextSample();
+
+                    expect (! click.isSounding(),
+                            juce::String (spec.name) + " at " + juce::String (sampleRate, 0)
+                                + "Hz was still sounding AFTER its intended duration of "
+                                + juce::String (intendedSamples) + " samples");
                     expectWithinAbsoluteError (click.renderNextSample(), 0.0f, 0.0001f);
                 }
             }

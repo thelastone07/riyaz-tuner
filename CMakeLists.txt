@@ -90,6 +90,15 @@ target_compile_definitions(riyaaz_metronome PUBLIC
     JUCE_STANDALONE_APPLICATION=1
 )
 
+add_library(riyaaz_practice STATIC
+    src/practice/AlankarPattern.cpp
+)
+target_include_directories(riyaaz_practice PUBLIC src)
+target_link_libraries(riyaaz_practice PUBLIC juce::juce_core riyaaz_swarmap)
+target_compile_definitions(riyaaz_practice PUBLIC
+    JUCE_STANDALONE_APPLICATION=1
+)
+
 juce_add_console_app(riyaaz_tests PRODUCT_NAME "Riyaaz Tests")
 target_sources(riyaaz_tests PRIVATE
     src/audio/swarmap/SwarMapperTests.cpp
@@ -105,6 +114,7 @@ target_sources(riyaaz_tests PRIVATE
     src/audio/metronome/TaalPatternTests.cpp
     src/audio/metronome/MetronomeClickTests.cpp
     src/audio/metronome/MetronomeAudioSourceTests.cpp
+    src/practice/AlankarPatternTests.cpp
     src/ui/PitchGraphComponent.cpp
     src/ui/PitchGraphPointBufferTests.cpp
     src/TestMain.cpp
@@ -129,6 +139,7 @@ target_link_libraries(riyaaz_tests PRIVATE
     riyaaz_worker
     riyaaz_tanpura
     riyaaz_metronome
+    riyaaz_practice
     juce::juce_core
     juce::juce_gui_basics
 )

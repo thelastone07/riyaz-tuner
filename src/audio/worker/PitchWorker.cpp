@@ -1,6 +1,7 @@
 // src/audio/worker/PitchWorker.cpp
 #include "PitchWorker.h"
 #include <algorithm>
+#include <cmath>
 
 PitchWorker::PitchWorker (PitchPipeline& pipelineIn, Listener& listenerIn, int fifoCapacitySamples)
     : Thread ("PitchWorker"),
@@ -61,9 +62,21 @@ void PitchWorker::pushAudio (const float* samples, int numSamples)
     {
         std::copy (samples + written, samples + written + writeHandle.blockSize2,
                    fifoBuffer.begin() + writeHandle.startIndex2);
+        written += writeHandle.blockSize2;
     }
     // If blockSize1 + blockSize2 < numSamples, the FIFO was full and the
     // remainder is dropped - by design, never blocks or grows here.
+
+    // --- TEMPORARY DIAGNOSTICS --- plain relaxed increments, audio-thread-safe.
+    totalSamplesPushed += numSamples;
+    if (written < numSamples)
+        totalSamplesDropped += (numSamples - written);
+
+    float peak = 0.0f;
+    for (int i = 0; i < numSamples; ++i)
+        peak = std::max (peak, std::abs (samples[i]));
+    lastPushedPeakAbs = peak;
+    // --- END TEMPORARY DIAGNOSTICS ---
 
     notify();
 }
@@ -108,7 +121,13 @@ void PitchWorker::run()
                 n += readHandle.blockSize2;
             }
 
+            // --- TEMPORARY DIAGNOSTICS ---
+            const double drainStartMs = juce::Time::getMillisecondCounterHiRes();
             auto update = pipeline.process (drainScratch.data(), (size_t) n);
+            lastDrainDurationMs = juce::Time::getMillisecondCounterHiRes() - drainStartMs;
+            lastDrainSampleCount = n;
+            ++totalDrainsProcessed;
+            // --- END TEMPORARY DIAGNOSTICS ---
 
             // Automatic calibration retry. TonicCalibrator::processFrame() is
             // idempotent once its window closes, so a Timeout/Unstable result

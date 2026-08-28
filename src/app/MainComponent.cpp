@@ -92,6 +92,14 @@ MainComponent::MainComponent()
 
     addAndMakeVisible (beatIndicator);
 
+    // --- TEMPORARY DIAGNOSTICS ---
+    addAndMakeVisible (diagnosticsLabel);
+    diagnosticsLabel.setFont (juce::Font (juce::FontOptions (12.0f)));
+    diagnosticsLabel.setColour (juce::Label::textColourId, juce::Colours::yellow);
+    diagnosticsLabel.setText ("diag: waiting for worker...", juce::dontSendNotification);
+    startTimerHz (2);
+    // --- END TEMPORARY DIAGNOSTICS ---
+
     addAndMakeVisible (pitchGraph);
 
     setSize (600, 500);
@@ -304,6 +312,38 @@ void MainComponent::pitchWorkerUpdate (const PitchPipelineUpdate& update)
     }
 }
 
+// --- TEMPORARY DIAGNOSTICS ---
+// Runs on the message thread (juce::Timer callbacks always do), polling the
+// worker's atomics independently of pitchWorkerUpdate() - so this keeps
+// updating even if the worker has stalled and pitchWorkerUpdate() has
+// stopped firing entirely, which is exactly the distinction under
+// investigation (audio still flowing in vs. the worker genuinely stuck).
+void MainComponent::timerCallback()
+{
+    if (worker == nullptr)
+    {
+        diagnosticsLabel.setText ("diag: no worker (not calibrating yet / device not ready)", juce::dontSendNotification);
+        return;
+    }
+
+    const auto pushed = worker->getTotalSamplesPushed();
+    const auto dropped = worker->getTotalSamplesDropped();
+    const auto drains = worker->getTotalDrainsProcessed();
+    const auto lastMs = worker->getLastDrainDurationMs();
+    const auto lastSamples = worker->getLastDrainSampleCount();
+    const auto peak = worker->getLastPushedPeakAbs();
+    const double dropPct = pushed > 0 ? (100.0 * (double) dropped / (double) pushed) : 0.0;
+
+    diagnosticsLabel.setText (
+        "diag: pushed=" + juce::String (pushed)
+            + " dropped=" + juce::String (dropped) + " (" + juce::String (dropPct, 2) + "%)"
+            + "  drains=" + juce::String (drains)
+            + "  last=" + juce::String (lastMs, 1) + "ms/" + juce::String (lastSamples) + "smp"
+            + "  MIC PEAK=" + juce::String (peak, 4),
+        juce::dontSendNotification);
+}
+// --- END TEMPORARY DIAGNOSTICS ---
+
 void MainComponent::paint (juce::Graphics& g)
 {
     g.fillAll (getLookAndFeel().findColour (juce::ResizableWindow::backgroundColourId));
@@ -330,6 +370,8 @@ void MainComponent::resized()
     metronomeBpmSlider.setBounds (area.removeFromTop (30).withTrimmedLeft (140).withTrimmedRight (10));
 
     beatIndicator.setBounds (area.removeFromTop (50));
+
+    diagnosticsLabel.setBounds (area.removeFromTop (18)); // TEMPORARY DIAGNOSTICS
 
     pitchGraph.setBounds (area);
 }

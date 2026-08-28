@@ -10,7 +10,10 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <memory>
 
-class MainComponent : public juce::AudioAppComponent, private PitchWorker::Listener
+// --- TEMPORARY DIAGNOSTICS (2026-08-28) --- see PitchWorker.h. Remove once
+// root cause of the "graph doesn't react / gets stuck" regression is
+// confirmed.
+class MainComponent : public juce::AudioAppComponent, private PitchWorker::Listener, private juce::Timer
 {
 public:
     MainComponent();
@@ -24,6 +27,7 @@ public:
     void resized() override;
 
 private:
+    void timerCallback() override; // TEMPORARY DIAGNOSTICS
     void pitchWorkerUpdate (const PitchPipelineUpdate& update) override;
     static TaalType taalTypeForComboId (int comboId);
 
@@ -48,6 +52,7 @@ private:
     juce::TextButton metronomeStartStopButton;
     BeatIndicatorComponent beatIndicator { metronomeSource };
     PitchGraphComponent pitchGraph;
+    juce::Label diagnosticsLabel; // TEMPORARY DIAGNOSTICS
 
     PitchPipelineUpdate lastUpdate { PitchPipelinePhase::Calibrating };
     bool metronomeRunning = false;

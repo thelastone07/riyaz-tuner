@@ -3,6 +3,7 @@
 #include "../pipeline/PitchPipeline.h"
 #include <juce_core/juce_core.h>
 #include <juce_events/juce_events.h>
+#include <atomic>
 #include <vector>
 
 // Owns the single worker thread that pulls microphone audio off a lock-free
@@ -57,6 +58,24 @@ public:
     void start();
     void stop();
 
+    // --- TEMPORARY DIAGNOSTICS (2026-08-28) ---
+    // Investigating a reported regression: "the graph doesn't react to voice
+    // immediately, and after a while it's stuck" since Tanpura/Metronome
+    // added real per-sample DSP work to the audio thread. PitchWorker.h's own
+    // header comment (above) documents a known, previously-untriggered risk:
+    // if this worker thread ever falls behind real time, a single
+    // pipeline.process() call can coalesce many callbacks' worth of audio,
+    // and the FIFO can start dropping fresh audio. These counters make that
+    // directly observable instead of theoretical. Remove once root cause is
+    // confirmed.
+    juce::int64 getTotalSamplesPushed() const noexcept    { return totalSamplesPushed.load(); }
+    juce::int64 getTotalSamplesDropped() const noexcept   { return totalSamplesDropped.load(); }
+    juce::int64 getTotalDrainsProcessed() const noexcept  { return totalDrainsProcessed.load(); }
+    double getLastDrainDurationMs() const noexcept        { return lastDrainDurationMs.load(); }
+    int getLastDrainSampleCount() const noexcept          { return lastDrainSampleCount.load(); }
+    float getLastPushedPeakAbs() const noexcept           { return lastPushedPeakAbs.load(); } // peak |sample| of the most recent pushAudio() call - proves whether real signal (not silence) is reaching the FIFO at all
+    // --- END TEMPORARY DIAGNOSTICS ---
+
 private:
     void run() override;
     void handleAsyncUpdate() override;
@@ -70,4 +89,13 @@ private:
 
     juce::CriticalSection latestUpdateLock;
     PitchPipelineUpdate latestUpdate { PitchPipelinePhase::Calibrating };
+
+    // --- TEMPORARY DIAGNOSTICS (2026-08-28) --- see public getters above.
+    std::atomic<juce::int64> totalSamplesPushed { 0 };
+    std::atomic<juce::int64> totalSamplesDropped { 0 };
+    std::atomic<juce::int64> totalDrainsProcessed { 0 };
+    std::atomic<double> lastDrainDurationMs { 0.0 };
+    std::atomic<int> lastDrainSampleCount { 0 };
+    std::atomic<float> lastPushedPeakAbs { 0.0f };
+    // --- END TEMPORARY DIAGNOSTICS ---
 };

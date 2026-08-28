@@ -33,6 +33,25 @@ private:
     void pitchWorkerUpdate (const PitchPipelineUpdate& update) override;
     static TaalType taalTypeForComboId (int comboId);
 
+    // Enable/disable, in one place, the controls that must not change while a
+    // practice run is live. Any metronome clock reset other than the one
+    // "Start Alankar Practice" itself arms injects an unabsorbed triggerBeat(0)
+    // into timerCallback()'s drain loop, silently advancing the engine one step
+    // out of alignment with the audible beat - so the two user-reachable ways
+    // to arm one mid-practice (the metronome's own start/stop button, and a
+    // taal change) are simply made unavailable while practice is live. The
+    // pattern combo is locked for a different reason: the engine snapshots its
+    // pattern at construction, so leaving it interactive lets the displayed
+    // selection disagree with what is actually running.
+    void setAlankarPracticeControlsLocked (bool locked);
+
+    // Tear down any Alankar practice (running or finished) and put the UI back
+    // to its no-practice state: stop the pacing click, drop the engine, clear
+    // the target band and results label, unlock the controls above. Shared by
+    // the two places that must do exactly this - leaving Alankar mode, and the
+    // pitch pipeline re-entering Calibrating - so the two can't drift apart.
+    void cancelAlankarPractice();
+
     CrepePitchEngine engine { juce::String ("models/crepe/small.onnx") };
     std::unique_ptr<PitchPipeline> pipeline;   // constructed in prepareToPlay(), once the real sample rate is known
     std::unique_ptr<PitchWorker> worker;       // ditto
@@ -71,4 +90,13 @@ private:
     // timerCallback()'s drain loop can absorb that first increment instead of
     // misreading it as step 0 having finished.
     bool alankarAwaitingFirstBeat = false;
+    // Which step index timerCallback() last rebuilt the target band and
+    // results label for. The work behind those two (getSummary() copies a
+    // vector, builds a std::map, builds a second vector and sorts it;
+    // setTargetBand() repaints unconditionally) produces byte-identical output
+    // until the step actually changes, so at 30Hz it was pure allocation and
+    // repaint churn. -1 is an impossible step index, so the first check after
+    // a practice starts always mismatches and renders. Same guard shape as
+    // BeatIndicatorComponent's "only repaint when something changed".
+    int lastRenderedAlankarStepIndex = -1;
 };

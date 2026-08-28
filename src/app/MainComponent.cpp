@@ -14,6 +14,37 @@ namespace
     };
 }
 
+void MainComponent::setAlankarPracticeControlsLocked (bool locked)
+{
+    // See the declaration in MainComponent.h for why each of these three is
+    // here. Kept as one helper rather than three setEnabled() calls repeated
+    // at each of the four call sites (practice start, practice finish,
+    // leaving Alankar mode, pipeline re-entering Calibrating), so the locked
+    // and unlocked sets can't drift apart.
+    metronomeStartStopButton.setEnabled (! locked);
+    metronomeTaalCombo.setEnabled (! locked);
+    alankarPatternCombo.setEnabled (! locked);
+}
+
+void MainComponent::cancelAlankarPractice()
+{
+    // Only stop the metronome if a practice was actually started
+    // (alankarEngine != nullptr) - otherwise this would also stop a metronome
+    // the user started manually for free practice, independent of Alankar mode.
+    if (alankarEngine != nullptr)
+    {
+        metronomeSource.setEnabled (false);
+        metronomeRunning = false;
+        metronomeStartStopButton.setButtonText ("Start metronome");
+    }
+
+    alankarEngine.reset();
+    lastRenderedAlankarStepIndex = -1;
+    pitchGraph.setTargetBand (std::nullopt);
+    setAlankarPracticeControlsLocked (false); // no practice can be live once the engine is gone
+    alankarResultsLabel.setText ("", juce::dontSendNotification);
+}
+
 TaalType MainComponent::taalTypeForComboId (int comboId)
 {
     switch (comboId)
@@ -132,22 +163,7 @@ MainComponent::MainComponent()
         alankarResultsLabel.setVisible (nowAlankarMode);
 
         if (! nowAlankarMode)
-        {
-            // Leaving Alankar mode - stop any active practice and its pacing click.
-            // Only stop the metronome if a practice was actually started
-            // (alankarEngine != nullptr) - otherwise this would also stop a
-            // metronome the user started manually for free practice,
-            // independent of Alankar mode.
-            if (alankarEngine != nullptr)
-            {
-                metronomeSource.setEnabled (false);
-                metronomeRunning = false;
-                metronomeStartStopButton.setButtonText ("Start metronome");
-            }
-            alankarEngine.reset();
-            pitchGraph.setTargetBand (std::nullopt);
-            alankarResultsLabel.setText ("", juce::dontSendNotification);
-        }
+            cancelAlankarPractice(); // leaving Alankar mode - drop any practice (running or finished) and its pacing click
     };
 
     addAndMakeVisible (alankarPatternCombo);
@@ -172,6 +188,10 @@ MainComponent::MainComponent()
         jassert (juce::isPositiveAndBelow (selectedIndex, (int) std::size (kAlankarPatternIds)));
         alankarEngine = std::make_unique<AlankarPracticeEngine> (kAlankarPatternIds[(size_t) selectedIndex]);
         lastSeenMetronomeBeats = metronomeSource.getTotalBeatsElapsed();
+        // Back to "nothing rendered yet" so timerCallback()'s step-change guard
+        // fires on its very first tick of this run and fills in the full
+        // "step 1/N" label (a previous run may have left a real index here).
+        lastRenderedAlankarStepIndex = -1;
         // Enabling the metronome from disabled (below) arms a reset that fires
         // triggerBeat(0) almost immediately - that means "step 0 begins now",
         // not "a beat elapsed". Absorb that one increment in timerCallback()'s
@@ -195,9 +215,19 @@ MainComponent::MainComponent()
         // already be in place before it fires.
         metronomeSource.setEnabled (true);
 
+        // Practice is now live: lock the controls that would otherwise arm a
+        // second, unabsorbed metronome reset (or silently disagree with the
+        // running pattern). Unlocked again in timerCallback()'s finish branch,
+        // in modeCombo's leaving-Alankar-mode branch, and when the pipeline
+        // re-enters Calibrating.
+        setAlankarPracticeControlsLocked (true);
+
         // Show a target band immediately, not just once the first voiced pitch
-        // frame arrives (see pitchWorkerUpdate()) - step 0 is always valid here
-        // since the engine was just constructed and can't be finished yet.
+        // frame arrives (see pitchWorkerUpdate()) or the first timer tick (up
+        // to 33ms away) - step 0 is always valid here since the engine was just
+        // constructed and can't be finished yet. This one duplicated band set
+        // per run is deliberate; it's what makes the band visible from the
+        // instant Start is pressed.
         const float target = alankarEngine->currentStepTargetCents();
         pitchGraph.setTargetBand (std::make_pair (target - AlankarPracticeEngine::kInTuneToleranceCents,
                                                    target + AlankarPracticeEngine::kInTuneToleranceCents));
@@ -379,6 +409,24 @@ void MainComponent::pitchWorkerUpdate (const PitchPipelineUpdate& update)
             case CalibrationStatus::Unstable:   text = "Pitch was too unstable - trying again..."; break;
         }
         statusLabel.setText (text, juce::dontSendNotification);
+
+        // Being in Calibrating means Sa is not known (again): a fresh pipeline
+        // starts here after a second prepareToPlay() (e.g. an audio device
+        // change). setEnabled(true) in the justBecameLive branch below is
+        // one-way, so without this the button would stay enabled from the
+        // PREVIOUS calibration and pressing it would run a whole pattern with
+        // zero pitch readings reaching the engine, reporting "0.0% in tune".
+        // This restores the invariant its declaration states: enabled only
+        // while a calibrated Sa exists.
+        alankarStartButton.setEnabled (false);
+
+        // Any practice in flight was being scored against a Sa that no longer
+        // applies, and a finished one's summary is equally stale - drop it,
+        // with the same cleanup leaving Alankar mode does (stop the pacing
+        // click, clear the band and label, unlock the locked controls).
+        // Guarded so this doesn't re-clear/repaint on every calibration update.
+        if (alankarEngine != nullptr)
+            cancelAlankarPractice();
     }
     else
     {
@@ -455,6 +503,7 @@ void MainComponent::timerCallback()
             metronomeRunning = false;
             metronomeStartStopButton.setButtonText ("Start metronome");
             pitchGraph.setTargetBand (std::nullopt);
+            setAlankarPracticeControlsLocked (false); // practice is over - the metronome, taal and pattern are the user's again
 
             const auto summary = alankarEngine->getSummary();
             juce::String text = "Done! Overall: " + juce::String (summary.overallTimeInTunePercent, 1) + "% in tune.";
@@ -465,8 +514,16 @@ void MainComponent::timerCallback()
             }
             alankarResultsLabel.setText (text, juce::dontSendNotification);
         }
-        else
+        // Only when the step actually changed: this callback runs at 30Hz but
+        // both the band and the label are functions of the current step alone,
+        // so re-deriving them every tick re-does a vector copy, a std::map
+        // build, a second vector, a sort and a repaint to produce exactly what
+        // is already on screen. lastRenderedAlankarStepIndex starts at -1 (and
+        // is reset to -1 when a practice starts), so step 0 always renders.
+        else if (alankarEngine->currentStepIndex() != lastRenderedAlankarStepIndex)
         {
+            lastRenderedAlankarStepIndex = alankarEngine->currentStepIndex();
+
             // Refresh the target band on every beat-driven step change, not
             // just on voiced pitch frames (see pitchWorkerUpdate()) - otherwise
             // the band would freeze on a stale step whenever the user pauses

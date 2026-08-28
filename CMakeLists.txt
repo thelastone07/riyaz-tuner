@@ -92,6 +92,7 @@ target_compile_definitions(riyaaz_metronome PUBLIC
 
 add_library(riyaaz_practice STATIC
     src/practice/AlankarPattern.cpp
+    src/practice/AlankarPracticeEngine.cpp
 )
 target_include_directories(riyaaz_practice PUBLIC src)
 target_link_libraries(riyaaz_practice PUBLIC juce::juce_core riyaaz_swarmap)
@@ -115,6 +116,7 @@ target_sources(riyaaz_tests PRIVATE
     src/audio/metronome/MetronomeClickTests.cpp
     src/audio/metronome/MetronomeAudioSourceTests.cpp
     src/practice/AlankarPatternTests.cpp
+    src/practice/AlankarPracticeEngineTests.cpp
     src/ui/PitchGraphComponent.cpp
     src/ui/PitchGraphPointBufferTests.cpp
     src/TestMain.cpp

@@ -31,6 +31,13 @@ public:
     PitchPipelineUpdate process (const float* audioFrame, size_t numSamples);
     void restartCalibration();
 
+    // Skips calibration entirely and starts directly in Live phase at a
+    // known Sa - used when a saved profile's Sa is being reused instead of
+    // recalibrating. Must be called before the first process() call (this
+    // is not a live re-tuning mechanism - see restartCalibration() for
+    // changing Sa mid-session).
+    void startLiveWithKnownSa (float knownSaHz);
+
 private:
     PitchEngine& engine;
     double sampleRate;

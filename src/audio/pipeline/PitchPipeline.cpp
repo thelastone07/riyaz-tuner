@@ -60,3 +60,14 @@ void PitchPipeline::restartCalibration()
     phase = PitchPipelinePhase::Calibrating;
     saHz = 0.0f;
 }
+
+void PitchPipeline::startLiveWithKnownSa (float knownSaHz)
+{
+    saHz = knownSaHz;
+    phase = PitchPipelinePhase::Live;
+    // Redundant given a fresh PitchPipeline already constructs a fresh
+    // SwarMapper, but cheap and makes the intent explicit rather than
+    // relying on that invariant silently - this is a genuine "start fresh"
+    // entry point, not just a phase flag flip.
+    swarMapper.reset();
+}

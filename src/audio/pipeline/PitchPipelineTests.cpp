@@ -244,6 +244,22 @@ public:
             expectEquals ((long long) nextLiveUpdate.timestampMs, (long long) 1152);
             expect (nextLiveUpdate.timestampMs > liveUpdate.timestampMs);
         }
+
+        beginTest ("startLiveWithKnownSa() skips calibration entirely and reports Live phase on the very first process() call");
+        {
+            std::vector<PitchFrame> script = { PitchFrame { 0, 220.0f, 0.9f } };
+            FakePitchEngine engine (script);
+            engine.prepare (44100.0);
+
+            PitchPipeline pipeline (engine, 44100.0);
+            pipeline.startLiveWithKnownSa (220.0f);
+
+            std::vector<float> block (44100 * 300 / 1000, 0.0f); // 300ms, matches this file's own test convention
+            const auto update = pipeline.process (block.data(), block.size());
+
+            expect (update.phase == PitchPipelinePhase::Live);
+            expectWithinAbsoluteError (update.saHz, 220.0f, 0.001f);
+        }
     }
 };
 

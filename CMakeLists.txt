@@ -169,6 +169,7 @@ target_sources(riyaaz_app PRIVATE
     # constructor/addPoint()/paint() symbols.
     src/ui/PitchGraphComponent.cpp
     src/ui/BeatIndicatorComponent.cpp
+    src/profile/ProfilePickerComponent.cpp
 )
 target_link_libraries(riyaaz_app PRIVATE
     riyaaz_pipeline
@@ -178,6 +179,7 @@ target_link_libraries(riyaaz_app PRIVATE
     riyaaz_tanpura
     riyaaz_metronome
     riyaaz_practice
+    riyaaz_profile
     juce::juce_audio_utils
     juce::juce_gui_extra
 )

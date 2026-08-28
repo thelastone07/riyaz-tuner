@@ -57,14 +57,23 @@ void PitchGraphComponent::paint (juce::Graphics& g)
 
     const auto bounds = getLocalBounds().toFloat();
 
-    // Cents axis: fixed +/-1200 cent range (a full octave either side of the
-    // calibrated Sa), clamped and never auto-rescaling. This graph is a
-    // MELODIC CONTOUR view - the shape of pitch movement across the octave a
-    // phrase actually travels - not a fine intonation meter parked on one
-    // swar. Horizontal gridlines mark every 100-cent swar boundary inside the
-    // visible octave, drawn dimmer than the Sa line so they read as reference
-    // rails behind the trace rather than as data.
-    constexpr float kCentsRange = 1200.0f;
+    // Cents axis: fixed +/-1400 cent range, clamped and never auto-rescaling.
+    // This graph is a MELODIC CONTOUR view - the shape of pitch movement
+    // across the octave a phrase actually travels - not a fine intonation
+    // meter parked on one swar. Horizontal gridlines mark every 100-cent swar
+    // boundary inside the visible octave, drawn dimmer than the Sa line so
+    // they read as reference rails behind the trace rather than as data.
+    //
+    // 1400 rather than a bare octave (1200): Taar Sa is EXACTLY +1200 cents
+    // and is the peak note of every alankar pattern, so at 1200 its +/-25c
+    // target band clamped to [1175, 1200] - a half-height sliver flush with
+    // the top edge - and a perfectly in-tune trace point at +1205c clamped to
+    // the same top rail, looking sharp while being scored in tune. 200 cents
+    // of headroom either side leaves room for the band plus normal overshoot,
+    // and improves the melodic-contour view for anything sung past Taar Sa.
+    // The gridline loop below is deliberately unaffected: it stops at +/-1100
+    // by its own literal bounds and does not derive them from this constant.
+    constexpr float kCentsRange = 1400.0f;
 
     const auto centsToY = [&bounds] (float cents)
     {

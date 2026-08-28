@@ -7,6 +7,8 @@
 #include "../audio/worker/PitchWorker.h"
 #include "../ui/PitchGraphComponent.h"
 #include "../ui/BeatIndicatorComponent.h"
+#include "../practice/AlankarPattern.h"
+#include "../practice/AlankarPracticeEngine.h"
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <memory>
 
@@ -56,4 +58,11 @@ private:
 
     PitchPipelineUpdate lastUpdate { PitchPipelinePhase::Calibrating };
     bool metronomeRunning = false;
+
+    juce::ComboBox modeCombo;
+    juce::ComboBox alankarPatternCombo;
+    juce::TextButton alankarStartButton;
+    juce::Label alankarResultsLabel;
+    std::unique_ptr<AlankarPracticeEngine> alankarEngine;
+    int lastSeenMetronomeBeats = 0; // matches MetronomeAudioSource::getTotalBeatsElapsed()'s int return type
 };

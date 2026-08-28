@@ -166,6 +166,7 @@ target_link_libraries(riyaaz_app PRIVATE
     riyaaz_swarmap
     riyaaz_tanpura
     riyaaz_metronome
+    riyaaz_practice
     juce::juce_audio_utils
     juce::juce_gui_extra
 )

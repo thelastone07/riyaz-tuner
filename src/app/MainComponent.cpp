@@ -100,9 +100,69 @@ MainComponent::MainComponent()
     startTimerHz (2);
     // --- END TEMPORARY DIAGNOSTICS ---
 
+    addAndMakeVisible (modeCombo);
+    modeCombo.addItem ("Free practice", 1);
+    modeCombo.addItem ("Alankar practice", 2);
+    modeCombo.setSelectedId (1, juce::dontSendNotification);
+    modeCombo.onChange = [this]
+    {
+        const bool nowAlankarMode = (modeCombo.getSelectedId() == 2);
+        alankarPatternCombo.setVisible (nowAlankarMode);
+        alankarStartButton.setVisible (nowAlankarMode);
+        alankarResultsLabel.setVisible (nowAlankarMode);
+
+        if (! nowAlankarMode)
+        {
+            // Leaving Alankar mode - stop any active practice and its pacing click.
+            alankarEngine.reset();
+            metronomeSource.setEnabled (false);
+            metronomeRunning = false;
+            metronomeStartStopButton.setButtonText ("Start metronome");
+            pitchGraph.setTargetBand (std::nullopt);
+            alankarResultsLabel.setText ("", juce::dontSendNotification);
+        }
+    };
+
+    addAndMakeVisible (alankarPatternCombo);
+    alankarPatternCombo.addItem ("Alankar 1", 1);
+    alankarPatternCombo.addItem ("Alankar 2", 2);
+    alankarPatternCombo.addItem ("Alankar 3", 3);
+    alankarPatternCombo.addItem ("Alankar 4", 4);
+    alankarPatternCombo.addItem ("Alankar 5", 5);
+    alankarPatternCombo.setSelectedId (1, juce::dontSendNotification);
+    alankarPatternCombo.setVisible (false); // hidden until Alankar mode is selected
+
+    addAndMakeVisible (alankarStartButton);
+    alankarStartButton.setButtonText ("Start Alankar Practice");
+    alankarStartButton.setVisible (false);
+    // Disabled until calibration succeeds (see the justBecameLive branch in
+    // pitchWorkerUpdate() below) - starting practice before Sa is known
+    // would advance steps with zero pitch data reaching them.
+    alankarStartButton.setEnabled (false);
+    alankarStartButton.onClick = [this]
+    {
+        static const AlankarPatternId patternIds[] = {
+            AlankarPatternId::Alankar1, AlankarPatternId::Alankar2, AlankarPatternId::Alankar3,
+            AlankarPatternId::Alankar4, AlankarPatternId::Alankar5
+        };
+        const int selectedIndex = alankarPatternCombo.getSelectedId() - 1; // ids are 1-5, array is 0-4
+        alankarEngine = std::make_unique<AlankarPracticeEngine> (patternIds[(size_t) selectedIndex]);
+        lastSeenMetronomeBeats = metronomeSource.getTotalBeatsElapsed();
+
+        metronomeSource.setTaal (TaalType::PlainClick);
+        metronomeSource.setEnabled (true);
+        metronomeRunning = true;
+        metronomeStartStopButton.setButtonText ("Stop metronome");
+
+        alankarResultsLabel.setText ("Practicing...", juce::dontSendNotification);
+    };
+
+    addAndMakeVisible (alankarResultsLabel);
+    alankarResultsLabel.setVisible (false);
+
     addAndMakeVisible (pitchGraph);
 
-    setSize (600, 500);
+    setSize (600, 560);
 
     // Mono input (mic) plus STEREO output: the tanpura drone is rendered into
     // the output channels. See getNextAudioBlock() for why this channel count
@@ -291,6 +351,7 @@ void MainComponent::pitchWorkerUpdate (const PitchPipelineUpdate& update)
             // setEnabled() so the very first audible block is already in tune.
             tanpuraSource.setSa (update.saHz);
             tanpuraSource.setEnabled (true);
+            alankarStartButton.setEnabled (true);
         }
         else if (update.swarLabel.has_value() && update.centsFromSa.has_value())
         {
@@ -308,7 +369,17 @@ void MainComponent::pitchWorkerUpdate (const PitchPipelineUpdate& update)
         // Plot whenever this frame carried a pitch, independently of which
         // text branch above ran (the transition frame can be voiced too).
         if (update.centsFromSa.has_value())
+        {
             pitchGraph.addPoint (update.timestampMs, *update.centsFromSa);
+
+            if (alankarEngine != nullptr && ! alankarEngine->isFinished())
+            {
+                alankarEngine->onPitchReading (*update.centsFromSa);
+                const float target = alankarEngine->currentStepTargetCents();
+                pitchGraph.setTargetBand (std::make_pair (target - AlankarPracticeEngine::kInTuneToleranceCents,
+                                                           target + AlankarPracticeEngine::kInTuneToleranceCents));
+            }
+        }
     }
 }
 
@@ -320,6 +391,41 @@ void MainComponent::pitchWorkerUpdate (const PitchPipelineUpdate& update)
 // investigation (audio still flowing in vs. the worker genuinely stuck).
 void MainComponent::timerCallback()
 {
+    // --- Alankar practice: beat-driven step advancement ---
+    if (alankarEngine != nullptr && ! alankarEngine->isFinished())
+    {
+        const auto currentBeats = metronomeSource.getTotalBeatsElapsed();
+        for (auto b = lastSeenMetronomeBeats; b < currentBeats; ++b)
+            alankarEngine->onBeatElapsed();
+        lastSeenMetronomeBeats = currentBeats;
+
+        if (alankarEngine->isFinished())
+        {
+            metronomeSource.setEnabled (false);
+            metronomeRunning = false;
+            metronomeStartStopButton.setButtonText ("Start metronome");
+            pitchGraph.setTargetBand (std::nullopt);
+
+            const auto summary = alankarEngine->getSummary();
+            juce::String text = "Done! Overall: " + juce::String (summary.overallTimeInTunePercent, 1) + "% in tune.";
+            if (! summary.perSwarTimeInTunePercent.empty())
+            {
+                text += "  Weakest: " + swarToString (summary.perSwarTimeInTunePercent.front().first)
+                        + " (" + juce::String (summary.perSwarTimeInTunePercent.front().second, 1) + "%)";
+            }
+            alankarResultsLabel.setText (text, juce::dontSendNotification);
+        }
+        else
+        {
+            const auto liveSummary = alankarEngine->getSummary();
+            alankarResultsLabel.setText (
+                "Practicing... step " + juce::String (alankarEngine->currentStepIndex() + 1) + "/"
+                    + juce::String (alankarEngine->totalSteps())
+                    + "   (" + juce::String (liveSummary.overallTimeInTunePercent, 1) + "% in tune so far)",
+                juce::dontSendNotification);
+        }
+    }
+
     if (worker == nullptr)
     {
         diagnosticsLabel.setText ("diag: no worker (not calibrating yet / device not ready)", juce::dontSendNotification);
@@ -372,6 +478,13 @@ void MainComponent::resized()
     beatIndicator.setBounds (area.removeFromTop (50));
 
     diagnosticsLabel.setBounds (area.removeFromTop (18)); // TEMPORARY DIAGNOSTICS
+
+    auto alankarControlsRow = area.removeFromTop (30);
+    modeCombo.setBounds (alankarControlsRow.removeFromLeft (150).reduced (2));
+    alankarStartButton.setBounds (alankarControlsRow.removeFromRight (150).reduced (2));
+    alankarPatternCombo.setBounds (alankarControlsRow.reduced (2));
+
+    alankarResultsLabel.setBounds (area.removeFromTop (18));
 
     pitchGraph.setBounds (area);
 }

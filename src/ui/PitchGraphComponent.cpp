@@ -45,6 +45,12 @@ void PitchGraphComponent::clear()
     repaint();
 }
 
+void PitchGraphComponent::setTargetBand (std::optional<std::pair<float, float>> centsRange)
+{
+    targetBand = centsRange;
+    repaint();
+}
+
 void PitchGraphComponent::paint (juce::Graphics& g)
 {
     g.fillAll (juce::Colours::black);
@@ -79,6 +85,22 @@ void PitchGraphComponent::paint (juce::Graphics& g)
     // The Sa line itself.
     g.setColour (juce::Colours::darkgrey);
     g.drawHorizontalLine ((int) bounds.getCentreY(), bounds.getX(), bounds.getRight());
+
+    // Alankar practice mode's live target-note band, drawn after the
+    // gridlines/Sa line but before the trace, so the trace is always
+    // visible on top of it. Drawn even if there aren't 2 points yet (i.e.
+    // before the function's early return below), so the target is visible
+    // from the very start of a step.
+    if (targetBand.has_value())
+    {
+        const float bandLowCents = juce::jlimit (-kCentsRange, kCentsRange, targetBand->first);
+        const float bandHighCents = juce::jlimit (-kCentsRange, kCentsRange, targetBand->second);
+        const float yHigh = centsToY (bandHighCents); // higher cents -> smaller Y (visually higher)
+        const float yLow = centsToY (bandLowCents);
+
+        g.setColour (juce::Colours::yellow.withAlpha (0.15f));
+        g.fillRect (bounds.getX(), yHigh, bounds.getWidth(), yLow - yHigh);
+    }
 
     const auto& points = buffer.getPoints();
     if (points.size() < 2)

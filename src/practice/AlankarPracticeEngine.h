@@ -4,19 +4,44 @@
 #include <utility>
 #include <vector>
 
+// NOTE ON WHAT THE "frames" NUMBERS BELOW ACTUALLY MEASURE. They are a COUNT
+// OF CONFIDENT PITCH-WORKER UPDATES DELIVERED during a step - not a
+// measurement of time. Two consequences, both deliberate for v1 and both
+// worth knowing before these values are treated as durations:
+//   - The delivery RATE is governed by pitch-worker and message-thread
+//     scheduling (PitchWorker coalesces every currently-ready FIFO sample
+//     into one process() call and its async delivery is latest-wins), not by
+//     elapsed time. A step that coincided with a worker stall or a busy
+//     message thread simply contributes fewer frames.
+//   - Attribution is by DELIVERY time, not by the moment the pitch was
+//     actually sung: onPitchReading() carries no timestamp, so a reading is
+//     credited to whichever step is current when it arrives. Inference plus
+//     the async hop means the tail of one step's audio is routinely credited
+//     to the next step.
+// So the percentages derived from them are an APPROXIMATION of time-in-tune,
+// not an exact one - good enough to rank swars against each other within a
+// run, not a precise duration measure. (Timestamped, capture-time attribution
+// is a deliberate later change; it is an API break across all three layers.)
 struct AlankarStepResult
 {
-    Swar swar;
-    int octaveOffset;
-    int framesInTune;
-    int framesTotal; // 0 if no confident pitch reading ever arrived during this step's window - happens at very high BPM relative to the pitch engine's ~64ms hop; reported as 0% for that step, not an error
+    Swar swar = Swar::Sa;
+    int octaveOffset = 0;
+    int framesInTune = 0;
+    int framesTotal = 0; // 0 if no confident pitch update was ever delivered during this step - happens at very high BPM relative to the pitch engine's ~64ms hop, or if the worker stalled across the whole step; reported as 0% for that step, not an error
 };
 
 struct AlankarSummary
 {
     std::vector<AlankarStepResult> perStep;
-    float overallTimeInTunePercent;                                // sum(framesInTune) / sum(framesTotal) across all steps, 0 if no frames at all
-    std::vector<std::pair<Swar, float>> perSwarTimeInTunePercent;   // aggregated across all steps using that swar (any octave), sorted worst-to-best
+    // sum(framesInTune) / sum(framesTotal) across all steps, 0 if no frames at
+    // all. Frame-COUNT weighted, not time-weighted - see the note above: steps
+    // that happened to receive more delivered updates carry more weight.
+    float overallTimeInTunePercent = 0.0f;
+    // Aggregated across all steps using that swar (any octave), sorted
+    // worst-to-best. Inherits the same frame-count weighting and
+    // delivery-time attribution as the overall figure above, so treat the
+    // ordering as indicative rather than exact.
+    std::vector<std::pair<Swar, float>> perSwarTimeInTunePercent;
 };
 
 // Pure logic, externally driven - no audio/JUCE-Timer dependency. The
@@ -39,7 +64,7 @@ public:
     bool isFinished() const;
     int currentStepIndex() const;  // valid until isFinished()
     int totalSteps() const;
-    float currentStepTargetCents() const; // valid until isFinished()
+    float currentStepTargetCents() const; // valid until isFinished(); asserts in Debug and returns 0.0f in Release if called on a finished engine (see the .cpp for why that guard is not redundant)
 
     AlankarSummary getSummary() const; // valid at any point, including mid-practice for a live partial readout
 

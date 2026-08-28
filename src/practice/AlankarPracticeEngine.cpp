@@ -59,6 +59,18 @@ int AlankarPracticeEngine::totalSteps() const
 float AlankarPracticeEngine::currentStepTargetCents() const
 {
     jassert (! isFinished()); // contract: caller must check isFinished() first - see header doc comment
+
+    // Defensive, not redundant with the assertion above: jassert compiles away
+    // entirely in Release, and on a finished engine stepIndex == size(), so
+    // the indexing below would be an out-of-range vector read (UB) rather than
+    // a caught contract violation. A finished engine is a normal, long-lived
+    // state - MainComponent deliberately keeps one alive after a practice run
+    // so it can keep displaying the final summary - so any future call site is
+    // realistically going to reach this method in that state. Fail with a
+    // defined wrong number instead of a memory read past the end.
+    if (isFinished())
+        return 0.0f;
+
     const auto& step = pattern.fullSequence()[(size_t) stepIndex];
     return centsFromSaForSwar (step.swar, step.octaveOffset);
 }

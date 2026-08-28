@@ -1,5 +1,18 @@
 // src/app/MainComponent.cpp
 #include "MainComponent.h"
+#include <iterator>
+
+namespace
+{
+    // Shared between the constructor (building the combo's items) and
+    // alankarStartButton.onClick (mapping the selected combo item back to a
+    // pattern) - kept in one place so the id<->index mapping can't drift
+    // between the two call sites.
+    constexpr AlankarPatternId kAlankarPatternIds[] = {
+        AlankarPatternId::Alankar1, AlankarPatternId::Alankar2, AlankarPatternId::Alankar3,
+        AlankarPatternId::Alankar4, AlankarPatternId::Alankar5
+    };
+}
 
 TaalType MainComponent::taalTypeForComboId (int comboId)
 {
@@ -97,8 +110,15 @@ MainComponent::MainComponent()
     diagnosticsLabel.setFont (juce::Font (juce::FontOptions (12.0f)));
     diagnosticsLabel.setColour (juce::Label::textColourId, juce::Colours::yellow);
     diagnosticsLabel.setText ("diag: waiting for worker...", juce::dontSendNotification);
-    startTimerHz (2);
     // --- END TEMPORARY DIAGNOSTICS ---
+
+    // NOTE: Alankar practice mode's beat-driven step advancement (see
+    // timerCallback()) also depends on this timer running - do not remove
+    // this call as part of any future diagnostics cleanup. 30Hz also matches
+    // the poll rate BeatIndicatorComponent already uses elsewhere in this
+    // codebase, so beat advancement is no coarser than the beat indicator's
+    // own visual resolution.
+    startTimerHz (30);
 
     addAndMakeVisible (modeCombo);
     modeCombo.addItem ("Free practice", 1);
@@ -114,21 +134,28 @@ MainComponent::MainComponent()
         if (! nowAlankarMode)
         {
             // Leaving Alankar mode - stop any active practice and its pacing click.
+            // Only stop the metronome if a practice was actually started
+            // (alankarEngine != nullptr) - otherwise this would also stop a
+            // metronome the user started manually for free practice,
+            // independent of Alankar mode.
+            if (alankarEngine != nullptr)
+            {
+                metronomeSource.setEnabled (false);
+                metronomeRunning = false;
+                metronomeStartStopButton.setButtonText ("Start metronome");
+            }
             alankarEngine.reset();
-            metronomeSource.setEnabled (false);
-            metronomeRunning = false;
-            metronomeStartStopButton.setButtonText ("Start metronome");
             pitchGraph.setTargetBand (std::nullopt);
             alankarResultsLabel.setText ("", juce::dontSendNotification);
         }
     };
 
     addAndMakeVisible (alankarPatternCombo);
-    alankarPatternCombo.addItem ("Alankar 1", 1);
-    alankarPatternCombo.addItem ("Alankar 2", 2);
-    alankarPatternCombo.addItem ("Alankar 3", 3);
-    alankarPatternCombo.addItem ("Alankar 4", 4);
-    alankarPatternCombo.addItem ("Alankar 5", 5);
+    // Built from kAlankarPatternIds + AlankarPattern::name() rather than
+    // hardcoded strings, so the naming convention only lives in one place
+    // (AlankarPattern) instead of being duplicated here and in onClick below.
+    for (size_t i = 0; i < std::size (kAlankarPatternIds); ++i)
+        alankarPatternCombo.addItem (AlankarPattern (kAlankarPatternIds[i]).name(), (int) i + 1);
     alankarPatternCombo.setSelectedId (1, juce::dontSendNotification);
     alankarPatternCombo.setVisible (false); // hidden until Alankar mode is selected
 
@@ -141,18 +168,39 @@ MainComponent::MainComponent()
     alankarStartButton.setEnabled (false);
     alankarStartButton.onClick = [this]
     {
-        static const AlankarPatternId patternIds[] = {
-            AlankarPatternId::Alankar1, AlankarPatternId::Alankar2, AlankarPatternId::Alankar3,
-            AlankarPatternId::Alankar4, AlankarPatternId::Alankar5
-        };
         const int selectedIndex = alankarPatternCombo.getSelectedId() - 1; // ids are 1-5, array is 0-4
-        alankarEngine = std::make_unique<AlankarPracticeEngine> (patternIds[(size_t) selectedIndex]);
+        jassert (juce::isPositiveAndBelow (selectedIndex, (int) std::size (kAlankarPatternIds)));
+        alankarEngine = std::make_unique<AlankarPracticeEngine> (kAlankarPatternIds[(size_t) selectedIndex]);
         lastSeenMetronomeBeats = metronomeSource.getTotalBeatsElapsed();
+        // Enabling the metronome from disabled (below) arms a reset that fires
+        // triggerBeat(0) almost immediately - that means "step 0 begins now",
+        // not "a beat elapsed". Absorb that one increment in timerCallback()'s
+        // drain loop instead of forwarding it to the engine.
+        alankarAwaitingFirstBeat = true;
 
         metronomeSource.setTaal (TaalType::PlainClick);
-        metronomeSource.setEnabled (true);
         metronomeRunning = true;
         metronomeStartStopButton.setButtonText ("Stop metronome");
+
+        // BeatIndicatorComponent doesn't read taal state from the audio thread
+        // itself - it must be told directly, same as metronomeTaalCombo.onChange
+        // above does, or it keeps showing whatever taal was previously selected
+        // (wrong light count, combo text mismatch) while the source is actually
+        // on PlainClick.
+        beatIndicator.setTaal (TaalType::PlainClick);
+        metronomeTaalCombo.setSelectedId (1, juce::dontSendNotification);
+
+        // setEnabled() last: it's what actually arms the reset described above,
+        // so everything it depends on (taal, alankarAwaitingFirstBeat) must
+        // already be in place before it fires.
+        metronomeSource.setEnabled (true);
+
+        // Show a target band immediately, not just once the first voiced pitch
+        // frame arrives (see pitchWorkerUpdate()) - step 0 is always valid here
+        // since the engine was just constructed and can't be finished yet.
+        const float target = alankarEngine->currentStepTargetCents();
+        pitchGraph.setTargetBand (std::make_pair (target - AlankarPracticeEngine::kInTuneToleranceCents,
+                                                   target + AlankarPracticeEngine::kInTuneToleranceCents));
 
         alankarResultsLabel.setText ("Practicing...", juce::dontSendNotification);
     };
@@ -383,20 +431,22 @@ void MainComponent::pitchWorkerUpdate (const PitchPipelineUpdate& update)
     }
 }
 
-// --- TEMPORARY DIAGNOSTICS ---
-// Runs on the message thread (juce::Timer callbacks always do), polling the
-// worker's atomics independently of pitchWorkerUpdate() - so this keeps
-// updating even if the worker has stalled and pitchWorkerUpdate() has
-// stopped firing entirely, which is exactly the distinction under
-// investigation (audio still flowing in vs. the worker genuinely stuck).
 void MainComponent::timerCallback()
 {
-    // --- Alankar practice: beat-driven step advancement ---
+    // --- Alankar practice: beat-driven step advancement (PERMANENT - not part
+    // of the diagnostics below). This block, and the startTimerHz() call that
+    // drives it (see the constructor), must survive any future cleanup of the
+    // TEMPORARY DIAGNOSTICS code further down this function.
     if (alankarEngine != nullptr && ! alankarEngine->isFinished())
     {
         const auto currentBeats = metronomeSource.getTotalBeatsElapsed();
         for (auto b = lastSeenMetronomeBeats; b < currentBeats; ++b)
-            alankarEngine->onBeatElapsed();
+        {
+            if (alankarAwaitingFirstBeat)
+                alankarAwaitingFirstBeat = false; // the reset's own initial triggerBeat(0) just means step 0 has begun, not that a beat has elapsed - absorb it, don't forward it
+            else
+                alankarEngine->onBeatElapsed();
+        }
         lastSeenMetronomeBeats = currentBeats;
 
         if (alankarEngine->isFinished())
@@ -417,6 +467,14 @@ void MainComponent::timerCallback()
         }
         else
         {
+            // Refresh the target band on every beat-driven step change, not
+            // just on voiced pitch frames (see pitchWorkerUpdate()) - otherwise
+            // the band would freeze on a stale step whenever the user pauses
+            // singing while the engine keeps advancing via the beat clock.
+            const float target = alankarEngine->currentStepTargetCents();
+            pitchGraph.setTargetBand (std::make_pair (target - AlankarPracticeEngine::kInTuneToleranceCents,
+                                                       target + AlankarPracticeEngine::kInTuneToleranceCents));
+
             const auto liveSummary = alankarEngine->getSummary();
             alankarResultsLabel.setText (
                 "Practicing... step " + juce::String (alankarEngine->currentStepIndex() + 1) + "/"
@@ -426,6 +484,12 @@ void MainComponent::timerCallback()
         }
     }
 
+    // --- TEMPORARY DIAGNOSTICS ---
+    // Runs on the message thread (juce::Timer callbacks always do), polling the
+    // worker's atomics independently of pitchWorkerUpdate() - so this keeps
+    // updating even if the worker has stalled and pitchWorkerUpdate() has
+    // stopped firing entirely, which is exactly the distinction under
+    // investigation (audio still flowing in vs. the worker genuinely stuck).
     if (worker == nullptr)
     {
         diagnosticsLabel.setText ("diag: no worker (not calibrating yet / device not ready)", juce::dontSendNotification);

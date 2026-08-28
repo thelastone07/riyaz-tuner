@@ -65,4 +65,10 @@ private:
     juce::Label alankarResultsLabel;
     std::unique_ptr<AlankarPracticeEngine> alankarEngine;
     int lastSeenMetronomeBeats = 0; // matches MetronomeAudioSource::getTotalBeatsElapsed()'s int return type
+    // Enabling the metronome from disabled arms a reset that fires triggerBeat(0)
+    // almost immediately on the next audio block - meaning "step 0 (Sam) begins
+    // now", not "one beat has elapsed". Set true right when practice starts so
+    // timerCallback()'s drain loop can absorb that first increment instead of
+    // misreading it as step 0 having finished.
+    bool alankarAwaitingFirstBeat = false;
 };

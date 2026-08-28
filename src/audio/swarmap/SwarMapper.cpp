@@ -98,3 +98,25 @@ juce::String registerToString (OctaveRegister reg)
     }
     return "?";
 }
+
+float centsFromSaForSwar (Swar swar, int octaveOffset)
+{
+    float baseCents = 0.0f;
+    switch (swar)
+    {
+        case Swar::Sa:       baseCents = 0.0f;    break;
+        case Swar::ReKomal:  baseCents = 100.0f;  break;
+        case Swar::Re:       baseCents = 200.0f;  break;
+        case Swar::GaKomal:  baseCents = 300.0f;  break;
+        case Swar::Ga:       baseCents = 400.0f;  break;
+        case Swar::Ma:       baseCents = 500.0f;  break;
+        case Swar::MaTivra:  baseCents = 600.0f;  break;
+        case Swar::Pa:       baseCents = 700.0f;  break;
+        case Swar::DhaKomal: baseCents = 800.0f;  break;
+        case Swar::Dha:      baseCents = 900.0f;  break;
+        case Swar::NiKomal:  baseCents = 1000.0f; break;
+        case Swar::Ni:       baseCents = 1100.0f; break;
+    }
+
+    return baseCents + (float) octaveOffset * 1200.0f;
+}

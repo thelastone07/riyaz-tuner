@@ -97,6 +97,27 @@ public:
             expectEquals (registerToString (OctaveRegister::Madhya), juce::String ("madhya"));
             expectEquals (registerToString (OctaveRegister::Other), juce::String ("other"));
         }
+
+        beginTest ("centsFromSaForSwar() gives the standard 12-EDO cents value for every swar, plus octaveOffset*1200");
+        {
+            expectWithinAbsoluteError (centsFromSaForSwar (Swar::Sa, 0), 0.0f, 0.0001f);
+            expectWithinAbsoluteError (centsFromSaForSwar (Swar::ReKomal, 0), 100.0f, 0.0001f);
+            expectWithinAbsoluteError (centsFromSaForSwar (Swar::Re, 0), 200.0f, 0.0001f);
+            expectWithinAbsoluteError (centsFromSaForSwar (Swar::GaKomal, 0), 300.0f, 0.0001f);
+            expectWithinAbsoluteError (centsFromSaForSwar (Swar::Ga, 0), 400.0f, 0.0001f);
+            expectWithinAbsoluteError (centsFromSaForSwar (Swar::Ma, 0), 500.0f, 0.0001f);
+            expectWithinAbsoluteError (centsFromSaForSwar (Swar::MaTivra, 0), 600.0f, 0.0001f);
+            expectWithinAbsoluteError (centsFromSaForSwar (Swar::Pa, 0), 700.0f, 0.0001f);
+            expectWithinAbsoluteError (centsFromSaForSwar (Swar::DhaKomal, 0), 800.0f, 0.0001f);
+            expectWithinAbsoluteError (centsFromSaForSwar (Swar::Dha, 0), 900.0f, 0.0001f);
+            expectWithinAbsoluteError (centsFromSaForSwar (Swar::NiKomal, 0), 1000.0f, 0.0001f);
+            expectWithinAbsoluteError (centsFromSaForSwar (Swar::Ni, 0), 1100.0f, 0.0001f);
+
+            // Non-zero octaveOffset: Sa one octave up (Taar) is 1200 cents;
+            // Ga one octave down (Mandra) is 400 - 1200 = -800 cents.
+            expectWithinAbsoluteError (centsFromSaForSwar (Swar::Sa, 1), 1200.0f, 0.0001f);
+            expectWithinAbsoluteError (centsFromSaForSwar (Swar::Ga, -1), -800.0f, 0.0001f);
+        }
     }
 };
 

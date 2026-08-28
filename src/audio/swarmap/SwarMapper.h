@@ -42,3 +42,4 @@ private:
 
 juce::String swarToString (Swar swar);
 juce::String registerToString (OctaveRegister reg);
+float centsFromSaForSwar (Swar swar, int octaveOffset);

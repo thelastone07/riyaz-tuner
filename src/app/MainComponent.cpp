@@ -57,7 +57,8 @@ TaalType MainComponent::taalTypeForComboId (int comboId)
     }
 }
 
-MainComponent::MainComponent()
+MainComponent::MainComponent (const juce::String& profileNameIn, std::optional<float> knownSaHzIn)
+    : activeProfileName (profileNameIn), pendingKnownSaHz (knownSaHzIn)
 {
     addAndMakeVisible (statusLabel);
     statusLabel.setJustificationType (juce::Justification::centred);
@@ -325,6 +326,12 @@ void MainComponent::prepareToPlay (int samplesPerBlockExpected, double sampleRat
     // reference before make_unique ever sees it, sidestepping the problem
     // without loosening PitchWorker::Listener back to a public/protected
     // base.
+    // Reusing a saved profile's Sa skips calibration entirely - the very
+    // first process() call (once the worker starts below) already reports
+    // Live phase, at this Sa, with zero calibration frames consumed.
+    if (pendingKnownSaHz.has_value())
+        pipeline->startLiveWithKnownSa (*pendingKnownSaHz);
+
     worker = std::make_unique<PitchWorker> (*pipeline, static_cast<PitchWorker::Listener&> (*this));
     worker->start();
 
@@ -440,14 +447,28 @@ void MainComponent::pitchWorkerUpdate (const PitchPipelineUpdate& update)
             // Fires regardless of whether THIS frame is voiced: it announces
             // the transition, not the current pitch.
             statusLabel.setText ("Calibrated!   " + saText, juce::dontSendNotification);
-
-            // Start the drone on the Sa we just calibrated to. Both setters are
-            // atomic stores consumed by the audio thread on its next block, so
-            // calling them from the message thread here is fine. setSa() before
-            // setEnabled() so the very first audible block is already in tune.
-            tanpuraSource.setSa (update.saHz);
-            tanpuraSource.setEnabled (true);
             alankarStartButton.setEnabled (true);
+
+            if (pendingKnownSaHz.has_value())
+            {
+                // Reusing a saved Sa - deliberately quieter than a fresh
+                // calibration: no tanpura auto-start, and nothing new to
+                // save since the Sa didn't change.
+            }
+            else
+            {
+                // Start the drone on the Sa we just calibrated to. Both setters are
+                // atomic stores consumed by the audio thread on its next block, so
+                // calling them from the message thread here is fine. setSa() before
+                // setEnabled() so the very first audible block is already in tune.
+                tanpuraSource.setSa (update.saHz);
+                tanpuraSource.setEnabled (true);
+
+                // A real calibration just succeeded (new profile, or an
+                // existing one's "Recalibrate") - persist the fresh Sa for
+                // next time.
+                profileStore.save ({ activeProfileName, update.saHz });
+            }
         }
         else if (update.swarLabel.has_value() && update.centsFromSa.has_value())
         {

@@ -9,8 +9,10 @@
 #include "../ui/BeatIndicatorComponent.h"
 #include "../practice/AlankarPattern.h"
 #include "../practice/AlankarPracticeEngine.h"
+#include "../profile/ProfileStore.h"
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <memory>
+#include <optional>
 
 // --- TEMPORARY DIAGNOSTICS (2026-08-28) --- see PitchWorker.h. Remove once
 // root cause of the "graph doesn't react / gets stuck" regression is
@@ -18,7 +20,7 @@
 class MainComponent : public juce::AudioAppComponent, private PitchWorker::Listener, private juce::Timer
 {
 public:
-    MainComponent();
+    explicit MainComponent (const juce::String& profileNameIn, std::optional<float> knownSaHzIn);
     ~MainComponent() override;
 
     void prepareToPlay (int samplesPerBlockExpected, double sampleRate) override;
@@ -51,6 +53,10 @@ private:
     // the two places that must do exactly this - leaving Alankar mode, and the
     // pitch pipeline re-entering Calibrating - so the two can't drift apart.
     void cancelAlankarPractice();
+
+    juce::String activeProfileName;
+    std::optional<float> pendingKnownSaHz;
+    ProfileStore profileStore { getStandardProfileStoreFile() };
 
     CrepePitchEngine engine { juce::String ("models/crepe/small.onnx") };
     std::unique_ptr<PitchPipeline> pipeline;   // constructed in prepareToPlay(), once the real sample rate is known

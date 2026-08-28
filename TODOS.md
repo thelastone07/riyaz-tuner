@@ -2,6 +2,97 @@
 
 Deferred, non-blocking items. Not urgent, but shouldn't get silently lost.
 
+## From the Alankar Practice Mode final-review fix wave (2026-08-28)
+
+Deferred out of the fix wave that closed 1 Critical + 2 Important + 4 Minor
+findings from the whole-branch alankar-practice review (commits
+`bcde084..a12fa9e`). Grouped by what future work each belongs to.
+
+**For the next sub-project (Accuracy scoring + session recording), which the
+spec commits to reusing `AlankarSummary` verbatim:**
+
+- **`AlankarPracticeEngine::onPitchReading()` attributes frames by delivery
+  time, not capture time, and `framesTotal` counts delivered pitch-worker UI
+  updates rather than elapsed time.** This wave only corrected the doc
+  comments to describe this honestly (`src/practice/AlankarPracticeEngine.h`)
+  — the underlying model is unchanged. Before persisting this data, widen
+  `onPitchReading(float centsFromSa, uint64_t timestampMs)` (the caller
+  already has `update.timestampMs` at the call site) and use it to attribute
+  frames to the step that was actually current at capture time, not
+  delivery time — a real design question for that sub-project's own
+  brainstorming, not a one-line fix.
+- **Test-coverage gaps that only show at the whole-plan level, not any one
+  task's scoped review:** no test exercises `onBeatElapsed()`/
+  `onPitchReading()`'s no-op guards on an already-finished engine, nor
+  `getSummary()` on a finished engine — which is precisely the state
+  `MainComponent` parks the engine in for the rest of a session, so it's
+  production-reachable, not theoretical. There's also no structural
+  assertion of the reversal invariant itself (`seq[i] == seq[2N-1-i]` and
+  `size() == 2 * ascendingSize`, asserted in a loop over all five pattern
+  ids) — the five literal per-pattern tests cover today's data well, but a
+  structural test is what would catch a *sixth* pattern (which the spec
+  explicitly anticipates as "additive, not a redesign") shipping with a
+  mis-built descending half.
+
+**Narrow, accepted residuals (not worth fixing given how rarely they're
+reachable):**
+
+- **A device-change-triggered `prepareToPlay()` on `MetronomeAudioSource`
+  still arms an unabsorbed reset**, which would silently advance an active
+  Alankar practice by one step, the same defect class the Critical finding
+  fixed for the two user-reachable paths (pause/resume via the metronome
+  button, changing the taal combo mid-practice — both now closed by locking
+  those controls while a practice is live). This third path can't be closed
+  by disabling UI controls, since a device change isn't a UI action. Matches
+  this codebase's existing precedent for device-switch edge cases (no
+  device-switch UI exists anywhere in v1).
+- **A microsecond-scale start race**: if the metronome was already running
+  manually when "Start Alankar Practice" is pressed, a naturally-occurring
+  beat could land between reading `getTotalBeatsElapsed()` and arming the
+  reset via `setTaal()`, getting absorbed as the "first beat" while the
+  reset's own beat gets forwarded — skipping one step. Same shape as an
+  already-accepted one-audio-block residual from the Metronome plan.
+- **`cancelAlankarPractice()` doesn't reset `alankarAwaitingFirstBeat`** —
+  harmless today (the only consumer is gated on a non-null engine, and
+  `onClick` always re-arms it before use), but leaves a member stale after
+  teardown. Worth a one-line cleanup if that function is touched again.
+- **`pitchWorkerUpdate()` still calls `pitchGraph.setTargetBand()`
+  unconditionally on every voiced frame**, not just on step change (the
+  fix wave's step-change guard only covers `timerCallback()`'s path, per
+  the finding's literal scope). Negligible in practice — `addPoint()` two
+  lines earlier already triggers a repaint, and JUCE coalesces both into
+  one frame — but worth folding into the same guard if that function is
+  touched again.
+- **Taar Sa lost its implicit "top rail" visual reference** when
+  `PitchGraphComponent`'s `kCentsRange` widened from 1200 to 1400 to stop
+  clamping the target band at the octave boundary (the actual bug fixed).
+  The peak note now floats at 85.7% of half-height with blank space above
+  it. Widening the swar-gridline loop from `-1100..1100` to `-1300..1300`
+  would restore a reference line at Taar Sa without reintroducing the clamp
+  bug.
+- **The metronome-controls lock (added to fix the Critical) could
+  theoretically persist if the audio device stops without a subsequent
+  `prepareToPlay()`** — `releaseResources()` doesn't cancel an active
+  practice, so if no more audio blocks ever render, the practice can never
+  reach its finish branch to unlock the controls. Narrow, and there's an
+  escape hatch: switching `modeCombo` back to "Free practice" always calls
+  `cancelAlankarPractice()`, which unlocks unconditionally.
+- **Pressing "Start Alankar Practice" again while a practice is already
+  live silently discards the in-progress run and restarts from step 0** —
+  this is handled *correctly* (all relevant state is properly reset), but
+  there's no confirmation and no UI cue that a run was discarded. Ties
+  together with a broader observation: the feature currently has three
+  logical states (idle / practicing / finished) represented only as
+  "engine exists or not" plus scattered booleans, rather than one explicit
+  state. An explicit small enum, with UI gated on it, would be a cleaner
+  foundation than adding more scattered guards as more edge cases surface.
+- **The live "% in tune so far" readout can be up to ~3 seconds stale** at
+  the BPM slider's 20 BPM floor, since it now only refreshes on step
+  boundaries (fixed to stop 30Hz allocation/repaint churn with no visible
+  change most of the time). Acceptable given it's a whole-run running
+  aggregate that barely moves per step after the first few, but worth
+  knowing if it ever feels sluggish at very slow tempos.
+
 ## From the Metronome final-review fix wave (2026-08-25)
 
 Deferred out of the fix wave that closed 3 Important + 2 Minor findings from

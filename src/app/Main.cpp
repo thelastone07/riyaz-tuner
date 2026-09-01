@@ -1,6 +1,7 @@
 // src/app/Main.cpp
 #include "MainComponent.h"
 #include "../profile/ProfilePickerComponent.h"
+#include "../ui/RiyaazLookAndFeel.h"
 #include <juce_gui_extra/juce_gui_extra.h>
 
 class RiyaazApplication : public juce::JUCEApplication
@@ -14,15 +15,24 @@ public:
 
     void initialise (const juce::String&) override
     {
+        // Installed before MainWindow (and therefore before ProfilePickerComponent
+        // or MainComponent) is constructed - both read colours/fonts from
+        // whatever the default look-and-feel is at construction time.
+        juce::LookAndFeel::setDefaultLookAndFeel (&lookAndFeel);
         mainWindow = std::make_unique<MainWindow> (getApplicationName());
     }
 
     void shutdown() override
     {
         mainWindow = nullptr;
+        // Reset before lookAndFeel is destroyed - JUCE asserts if the
+        // default look-and-feel is destroyed while still installed.
+        juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
     }
 
 private:
+    RiyaazLookAndFeel lookAndFeel;
+
     class MainWindow : public juce::DocumentWindow
     {
     public:

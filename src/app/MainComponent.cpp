@@ -1,5 +1,6 @@
 // src/app/MainComponent.cpp
 #include "MainComponent.h"
+#include "../ui/RiyaazLookAndFeel.h"
 #include <iterator>
 
 namespace
@@ -62,6 +63,8 @@ MainComponent::MainComponent (const juce::String& profileNameIn, std::optional<f
 {
     addAndMakeVisible (statusLabel);
     statusLabel.setJustificationType (juce::Justification::centred);
+    statusLabel.setFont (RiyaazLookAndFeel::bodyFont());
+    statusLabel.setColour (juce::Label::textColourId, RiyaazColours::primaryText);
     statusLabel.setText ("Starting...", juce::dontSendNotification);
 
     // Added (and made visible) BEFORE attachToComponent() below: an attached
@@ -78,7 +81,7 @@ MainComponent::MainComponent (const juce::String& profileNameIn, std::optional<f
     };
 
     addAndMakeVisible (tanpuraVolumeLabel);
-    tanpuraVolumeLabel.setText ("Tanpura", juce::dontSendNotification);
+    tanpuraVolumeLabel.setText ("TANPURA", juce::dontSendNotification);
     tanpuraVolumeLabel.attachToComponent (&tanpuraVolumeSlider, true);
 
     // Push the slider's initial value into the source here, on the message
@@ -113,7 +116,7 @@ MainComponent::MainComponent (const juce::String& profileNameIn, std::optional<f
     };
 
     addAndMakeVisible (metronomeBpmLabel);
-    metronomeBpmLabel.setText ("Metronome BPM", juce::dontSendNotification);
+    metronomeBpmLabel.setText ("METRONOME BPM", juce::dontSendNotification);
     metronomeBpmLabel.attachToComponent (&metronomeBpmSlider, true);
 
     addAndMakeVisible (metronomeStartStopButton);
@@ -239,6 +242,8 @@ MainComponent::MainComponent (const juce::String& profileNameIn, std::optional<f
     };
 
     addAndMakeVisible (alankarResultsLabel);
+    alankarResultsLabel.setFont (RiyaazLookAndFeel::smallMetaFont());
+    alankarResultsLabel.setColour (juce::Label::textColourId, RiyaazColours::primaryText);
     alankarResultsLabel.setVisible (false);
 
     addAndMakeVisible (sessionHistoryButton);
@@ -251,6 +256,7 @@ MainComponent::MainComponent (const juce::String& profileNameIn, std::optional<f
             analyticsView.setVisible (false);
             pitchGraph.setVisible (true);
             sessionHistoryButton.setButtonText ("Session History");
+            sessionHistoryButton.setToggleState (false, juce::dontSendNotification);
         }
         else
         {
@@ -261,6 +267,7 @@ MainComponent::MainComponent (const juce::String& profileNameIn, std::optional<f
             analyticsView.setVisible (true);
             pitchGraph.setVisible (false);
             sessionHistoryButton.setButtonText ("Back to practice");
+            sessionHistoryButton.setToggleState (true, juce::dontSendNotification);
         }
     };
 

@@ -1,4 +1,5 @@
 #include "BeatIndicatorComponent.h"
+#include "RiyaazLookAndFeel.h"
 
 BeatIndicatorComponent::BeatIndicatorComponent (MetronomeAudioSource& sourceIn)
     : source (sourceIn)
@@ -17,18 +18,23 @@ void BeatIndicatorComponent::setTaal (TaalType newType)
     repaint();
 }
 
-juce::Colour BeatIndicatorComponent::colourFor (BeatType type) const
+// Persistent (not flash-dependent) styling per beat type - a taal cycle's
+// structure should read at a glance even before anything fires: Sam (the
+// downbeat) and Khali (the silent vibhaag boundary) get a larger, coloured
+// ring; Clap and Plain stay small dots, distinguished only by a slightly
+// brighter border on Clap.
+BeatIndicatorComponent::BeatStyle BeatIndicatorComponent::styleFor (BeatType type) const
 {
     switch (type)
     {
-        case BeatType::Sam:   return juce::Colours::red;
-        case BeatType::Clap:  return juce::Colours::dodgerblue;
-        case BeatType::Khali: return juce::Colours::grey;
-        case BeatType::Plain: return juce::Colours::lightgrey;
+        case BeatType::Sam:   return { 1.35f, RiyaazColours::gold,    2.0f, RiyaazColours::surface };
+        case BeatType::Khali: return { 1.2f,  RiyaazColours::indigo,  2.0f, RiyaazColours::canvas };
+        case BeatType::Clap:  return { 1.0f,  RiyaazColours::mutedText, 1.0f, RiyaazColours::surface };
+        case BeatType::Plain: return { 1.0f,  RiyaazColours::border, 1.0f, RiyaazColours::surface };
     }
 
     jassertfalse; // unreachable - every BeatType enumerator is handled above
-    return juce::Colours::lightgrey;
+    return { 1.0f, RiyaazColours::border, 1.0f, RiyaazColours::surface };
 }
 
 void BeatIndicatorComponent::timerCallback()
@@ -70,14 +76,34 @@ void BeatIndicatorComponent::paint (juce::Graphics& g)
     const int beatCount = displayPattern.beatCount();
     const int currentBeat = source.getCurrentBeatIndex();
 
+    const auto fillLit = [&] (juce::Rectangle<float> circle)
+    {
+        juce::ColourGradient gradient (RiyaazColours::goldLitInner, circle.getX() + circle.getWidth() * 0.35f,
+                                        circle.getY() + circle.getHeight() * 0.3f,
+                                        RiyaazColours::goldLitOuter, circle.getCentreX(), circle.getBottom(), true);
+        gradient.addColour (0.65, RiyaazColours::gold);
+        g.setGradientFill (gradient);
+        g.fillEllipse (circle);
+    };
+
     if (beatCount <= 1)
     {
         // PlainClick: no cycle to show progression through, so pulse a
         // single dot on every beat instead of highlighting a row position.
         const float diameter = juce::jmin (area.getWidth(), area.getHeight()) * (0.4f + 0.4f * flashIntensity);
         auto circle = juce::Rectangle<float> (diameter, diameter).withCentre (area.getCentre());
-        g.setColour (colourFor (BeatType::Plain).brighter (flashIntensity));
-        g.fillEllipse (circle);
+
+        if (flashIntensity > 0.05f)
+        {
+            fillLit (circle);
+        }
+        else
+        {
+            g.setColour (RiyaazColours::surface);
+            g.fillEllipse (circle);
+            g.setColour (RiyaazColours::border);
+            g.drawEllipse (circle, 1.0f);
+        }
         return;
     }
 
@@ -86,18 +112,25 @@ void BeatIndicatorComponent::paint (juce::Graphics& g)
     {
         const BeatType type = displayPattern.classify (i);
         const bool isCurrent = (i == currentBeat);
+        const auto style = styleFor (type);
 
-        const float baseDiameter = juce::jmin (slotWidth, area.getHeight()) * 0.6f;
-        const float diameter = isCurrent ? baseDiameter * (1.0f + 0.3f * flashIntensity) : baseDiameter;
+        const float baseDiameter = juce::jmin (slotWidth, area.getHeight()) * 0.55f * style.relativeDiameterScale;
+        const float diameter = isCurrent ? baseDiameter * (1.0f + 0.2f * flashIntensity) : baseDiameter;
 
         auto slot = area.withX (area.getX() + slotWidth * (float) i).withWidth (slotWidth);
         auto circle = juce::Rectangle<float> (diameter, diameter).withCentre (slot.getCentre());
 
-        auto colour = colourFor (type);
-        if (isCurrent)
-            colour = colour.brighter (flashIntensity);
+        if (isCurrent && flashIntensity > 0.05f)
+        {
+            fillLit (circle);
+        }
+        else
+        {
+            g.setColour (style.fillColour);
+            g.fillEllipse (circle);
+        }
 
-        g.setColour (colour);
-        g.fillEllipse (circle);
+        g.setColour (style.borderColour);
+        g.drawEllipse (circle, style.borderWidth);
     }
 }

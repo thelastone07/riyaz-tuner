@@ -20,6 +20,7 @@ public:
     // (a profile with no completed Alankar sessions yet).
     void setSessions (std::vector<AlankarSessionRecord> sessionsOldestFirstIn);
 
+    void paint (juce::Graphics&) override;
     void resized() override;
 
 private:
@@ -34,4 +35,10 @@ private:
     // paintListBoxItem() maps display row 0 (most recent) to the LAST
     // element, rather than re-sorting a second copy.
     std::vector<AlankarSessionRecord> sessionsOldestFirst;
+
+    // How many of the most-recent rows (display rows 0..N-1) computeTrend()
+    // actually averaged into the "recent" side of the trend - those rows are
+    // highlighted in the list so the trend line and the rows backing it read
+    // as one connected idea rather than two independent numbers.
+    int recentWindowCount = 0;
 };

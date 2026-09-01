@@ -1,4 +1,7 @@
 #include "PitchGraphComponent.h"
+#include "RiyaazLookAndFeel.h"
+#include "../audio/swarmap/SwarMapper.h"
+#include <array>
 
 PitchGraphPointBuffer::PitchGraphPointBuffer (uint64_t maxAgeMsIn)
     : maxAgeMs (maxAgeMsIn)
@@ -53,9 +56,10 @@ void PitchGraphComponent::setTargetBand (std::optional<std::pair<float, float>> 
 
 void PitchGraphComponent::paint (juce::Graphics& g)
 {
-    g.fillAll (juce::Colours::black);
+    g.fillAll (RiyaazColours::graphPanel);
 
     const auto bounds = getLocalBounds().toFloat();
+    const juce::Font labelFont (juce::FontOptions ("Georgia", 9.0f, juce::Font::plain));
 
     // Cents axis: fixed +/-1400 cent range, clamped and never auto-rescaling.
     // This graph is a MELODIC CONTOUR view - the shape of pitch movement
@@ -80,20 +84,46 @@ void PitchGraphComponent::paint (juce::Graphics& g)
         return bounds.getCentreY() - (cents / kCentsRange) * (bounds.getHeight() * 0.5f);
     };
 
-    // Swar gridlines at +/-100..+/-1100 cents (0 is the Sa line, drawn
-    // brighter just below). Drawn before the trace so the trace sits on top.
-    g.setColour (juce::Colour (0xff2b2b2b));
+    // Swar gridlines at +/-100..+/-1100 cents (0 is the Sa line, drawn gold
+    // just below), each labelled with its swar name so the reference lines
+    // read as a scale, not just abstract ticks. Drawn before the trace so
+    // the trace sits on top. Dashed lines and labels are drawn as two
+    // separate passes - drawDashedLine and drawText both need g's current
+    // colour set to something different, so interleaving them per-line
+    // would mean re-setting colour twice per iteration for no benefit.
+    static const std::array<float, 2> kDashLengths { 3.0f, 4.0f };
+
+    g.setColour (RiyaazColours::border);
     for (int cents = -1100; cents <= 1100; cents += 100)
     {
         if (cents == 0)
             continue;
 
-        g.drawHorizontalLine ((int) centsToY ((float) cents), bounds.getX(), bounds.getRight());
+        const float y = centsToY ((float) cents);
+        g.drawDashedLine (juce::Line<float> (bounds.getX(), y, bounds.getRight(), y),
+                           kDashLengths.data(), (int) kDashLengths.size(), 1.0f);
     }
 
-    // The Sa line itself.
-    g.setColour (juce::Colours::darkgrey);
+    g.setColour (RiyaazColours::mutedText);
+    g.setFont (labelFont);
+    for (int cents = -1100; cents <= 1100; cents += 100)
+    {
+        if (cents == 0)
+            continue;
+
+        const int semitoneIndex = ((cents / 100) % 12 + 12) % 12;
+        const float y = centsToY ((float) cents);
+        g.drawText (swarToString ((Swar) semitoneIndex), bounds.getX() + 4.0f, y - 7.0f, 24.0f, 14.0f,
+                    juce::Justification::centredLeft);
+    }
+
+    // The Sa line itself - gold, the design system's reference-line accent.
+    g.setColour (RiyaazColours::gold.withAlpha (0.6f));
     g.drawHorizontalLine ((int) bounds.getCentreY(), bounds.getX(), bounds.getRight());
+    g.setColour (RiyaazColours::gold);
+    g.setFont (labelFont);
+    g.drawText (swarToString (Swar::Sa), bounds.getX() + 4.0f, bounds.getCentreY() - 7.0f, 24.0f, 14.0f,
+                juce::Justification::centredLeft);
 
     // Alankar practice mode's live target-note band, drawn after the
     // gridlines/Sa line but before the trace, so the trace is always
@@ -107,7 +137,7 @@ void PitchGraphComponent::paint (juce::Graphics& g)
         const float yHigh = centsToY (bandHighCents); // higher cents -> smaller Y (visually higher)
         const float yLow = centsToY (bandLowCents);
 
-        g.setColour (juce::Colours::yellow.withAlpha (0.15f));
+        g.setColour (RiyaazColours::gold.withAlpha (0.16f));
         g.fillRect (bounds.getX(), yHigh, bounds.getWidth(), yLow - yHigh);
     }
 
@@ -139,6 +169,6 @@ void PitchGraphComponent::paint (juce::Graphics& g)
         }
     }
 
-    g.setColour (juce::Colours::limegreen);
+    g.setColour (RiyaazColours::indigo);
     g.strokePath (path, juce::PathStrokeType (2.0f));
 }

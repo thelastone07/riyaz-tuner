@@ -21,8 +21,18 @@ public:
     void paint (juce::Graphics& g) override;
 
 private:
+    // Persistent (not flash-dependent) look for a beat type: how much bigger
+    // than the base dot it is, its border colour/width, and its unlit fill.
+    struct BeatStyle
+    {
+        float relativeDiameterScale;
+        juce::Colour borderColour;
+        float borderWidth;
+        juce::Colour fillColour;
+    };
+
     void timerCallback() override;
-    juce::Colour colourFor (BeatType type) const;
+    BeatStyle styleFor (BeatType type) const;
 
     MetronomeAudioSource& source;
     TaalPattern displayPattern { TaalType::PlainClick };

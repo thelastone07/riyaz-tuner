@@ -175,6 +175,7 @@ target_sources(riyaaz_app PRIVATE
     src/ui/BeatIndicatorComponent.cpp
     src/ui/AnalyticsComponent.cpp
     src/ui/RiyaazLookAndFeel.cpp
+    src/ui/SwarChipRowComponent.cpp
     src/profile/ProfilePickerComponent.cpp
 )
 target_link_libraries(riyaaz_app PRIVATE

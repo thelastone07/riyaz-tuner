@@ -36,7 +36,7 @@ void MainComponent::cancelAlankarPractice()
     {
         metronomeSource.setEnabled (false);
         metronomeRunning = false;
-        metronomeStartStopButton.setButtonText ("Start metronome");
+        updateMetronomeStartStopButtonText();
     }
 
     alankarEngine.reset();
@@ -58,6 +58,37 @@ TaalType MainComponent::taalTypeForComboId (int comboId)
     }
 }
 
+void MainComponent::updateMetronomeStartStopButtonText()
+{
+    // Icon-only square button (see its declaration in MainComponent.h) -
+    // "stop" square when running, "play" triangle when not. Built via
+    // CharPointer_UTF8 rather than a plain string literal so the glyph is
+    // interpreted correctly regardless of the source file's own encoding.
+    metronomeStartStopButton.setButtonText (metronomeRunning
+        ? juce::String (juce::CharPointer_UTF8 ("\xE2\x96\xA0"))  // "■"
+        : juce::String (juce::CharPointer_UTF8 ("\xE2\x96\xB6"))); // "▶"
+}
+
+void MainComponent::refreshSwarChipRowFromSelectedPattern()
+{
+    const int selectedIndex = alankarPatternCombo.getSelectedId() - 1; // ids are 1-5, array is 0-4
+    if (! juce::isPositiveAndBelow (selectedIndex, (int) std::size (kAlankarPatternIds)))
+        return; // defensive only - the combo is always populated with a valid selection before this can fire
+
+    // pattern must outlive the reference below - fullSequence() returns a
+    // reference into pattern's own internal vector, and a temporary
+    // (AlankarPattern (...).fullSequence()) would be destroyed at the end of
+    // this statement, leaving that reference dangling for the loop that
+    // reads it.
+    const AlankarPattern pattern (kAlankarPatternIds[(size_t) selectedIndex]);
+    const auto& sequence = pattern.fullSequence();
+    std::vector<Swar> swars;
+    swars.reserve (sequence.size());
+    for (const auto& step : sequence)
+        swars.push_back (step.swar);
+    swarChipRow.setSequence (std::move (swars));
+}
+
 MainComponent::MainComponent (const juce::String& profileNameIn, std::optional<float> knownSaHzIn)
     : activeProfileName (profileNameIn), pendingKnownSaHz (knownSaHzIn)
 {
@@ -67,11 +98,11 @@ MainComponent::MainComponent (const juce::String& profileNameIn, std::optional<f
     statusLabel.setColour (juce::Label::textColourId, RiyaazColours::primaryText);
     statusLabel.setText ("Starting...", juce::dontSendNotification);
 
-    // Added (and made visible) BEFORE attachToComponent() below: an attached
-    // Label mirrors its owner's visibility at attach time and adds itself to
-    // the owner's parent, so attaching to a slider that is not yet visible /
-    // not yet parented makes the label's own state depend on JUCE's later
-    // visibility-change callback to recover.
+    // The compact Tanpura / Taal / Metronome BPM row (see resized()) gives
+    // each control its own caption ABOVE it, not to its left as this app's
+    // very first layout did - so none of these three labels use
+    // Label::attachToComponent() any more; resized() positions each one
+    // explicitly, in lockstep with its control.
     addAndMakeVisible (tanpuraVolumeSlider);
     tanpuraVolumeSlider.setRange (0.0, 1.0);
     tanpuraVolumeSlider.setValue (0.5, juce::dontSendNotification);
@@ -82,7 +113,6 @@ MainComponent::MainComponent (const juce::String& profileNameIn, std::optional<f
 
     addAndMakeVisible (tanpuraVolumeLabel);
     tanpuraVolumeLabel.setText ("TANPURA", juce::dontSendNotification);
-    tanpuraVolumeLabel.attachToComponent (&tanpuraVolumeSlider, true);
 
     // Push the slider's initial value into the source here, on the message
     // thread, while the audio device is still closed - rather than from
@@ -107,6 +137,9 @@ MainComponent::MainComponent (const juce::String& profileNameIn, std::optional<f
         beatIndicator.setTaal (type);
     };
 
+    addAndMakeVisible (metronomeTaalLabel);
+    metronomeTaalLabel.setText ("TAAL", juce::dontSendNotification);
+
     addAndMakeVisible (metronomeBpmSlider);
     metronomeBpmSlider.setRange (20.0, 300.0, 1.0);
     metronomeBpmSlider.setValue (80.0, juce::dontSendNotification);
@@ -117,15 +150,14 @@ MainComponent::MainComponent (const juce::String& profileNameIn, std::optional<f
 
     addAndMakeVisible (metronomeBpmLabel);
     metronomeBpmLabel.setText ("METRONOME BPM", juce::dontSendNotification);
-    metronomeBpmLabel.attachToComponent (&metronomeBpmSlider, true);
 
     addAndMakeVisible (metronomeStartStopButton);
-    metronomeStartStopButton.setButtonText ("Start metronome");
+    updateMetronomeStartStopButtonText();
     metronomeStartStopButton.onClick = [this]
     {
         metronomeRunning = ! metronomeRunning;
         metronomeSource.setEnabled (metronomeRunning);
-        metronomeStartStopButton.setButtonText (metronomeRunning ? "Stop metronome" : "Start metronome");
+        updateMetronomeStartStopButtonText();
     };
 
     // Push the initial BPM/taal into the source here, on the message
@@ -164,10 +196,19 @@ MainComponent::MainComponent (const juce::String& profileNameIn, std::optional<f
         const bool nowAlankarMode = (modeCombo.getSelectedId() == 2);
         alankarPatternCombo.setVisible (nowAlankarMode);
         alankarStartButton.setVisible (nowAlankarMode);
+        swarChipRow.setVisible (nowAlankarMode);
         alankarResultsLabel.setVisible (nowAlankarMode);
+
+        if (nowAlankarMode)
+            refreshSwarChipRowFromSelectedPattern(); // show the selected pattern (step 0) even before Start is pressed
 
         if (! nowAlankarMode)
             cancelAlankarPractice(); // leaving Alankar mode - drop any practice (running or finished) and its pacing click
+
+        // resized() reserves layout space for the pattern/swar-chip rows
+        // only in Alankar mode (see there) - a visibility change alone
+        // doesn't re-run layout, so force it explicitly.
+        resized();
     };
 
     addAndMakeVisible (alankarPatternCombo);
@@ -178,6 +219,7 @@ MainComponent::MainComponent (const juce::String& profileNameIn, std::optional<f
         alankarPatternCombo.addItem (AlankarPattern (kAlankarPatternIds[i]).name(), (int) i + 1);
     alankarPatternCombo.setSelectedId (1, juce::dontSendNotification);
     alankarPatternCombo.setVisible (false); // hidden until Alankar mode is selected
+    alankarPatternCombo.onChange = [this] { refreshSwarChipRowFromSelectedPattern(); };
 
     addAndMakeVisible (alankarStartButton);
     alankarStartButton.setButtonText ("Start Alankar Practice");
@@ -206,7 +248,7 @@ MainComponent::MainComponent (const juce::String& profileNameIn, std::optional<f
 
         metronomeSource.setTaal (TaalType::PlainClick);
         metronomeRunning = true;
-        metronomeStartStopButton.setButtonText ("Stop metronome");
+        updateMetronomeStartStopButtonText();
 
         // BeatIndicatorComponent doesn't read taal state from the audio thread
         // itself - it must be told directly, same as metronomeTaalCombo.onChange
@@ -238,8 +280,15 @@ MainComponent::MainComponent (const juce::String& profileNameIn, std::optional<f
         pitchGraph.setTargetBand (std::make_pair (target - AlankarPracticeEngine::kInTuneToleranceCents,
                                                    target + AlankarPracticeEngine::kInTuneToleranceCents));
 
+        // A fresh run always starts at step 0 - refreshSwarChipRowFromSelectedPattern()
+        // rebuilds the sequence and resets the highlighted index to 0 together.
+        refreshSwarChipRowFromSelectedPattern();
+
         alankarResultsLabel.setText ("Practicing...", juce::dontSendNotification);
     };
+
+    addAndMakeVisible (swarChipRow);
+    swarChipRow.setVisible (false); // hidden until Alankar mode is selected, same as alankarPatternCombo
 
     addAndMakeVisible (alankarResultsLabel);
     alankarResultsLabel.setFont (RiyaazLookAndFeel::smallMetaFont());
@@ -555,7 +604,7 @@ void MainComponent::timerCallback()
         {
             metronomeSource.setEnabled (false);
             metronomeRunning = false;
-            metronomeStartStopButton.setButtonText ("Start metronome");
+            updateMetronomeStartStopButtonText();
             pitchGraph.setTargetBand (std::nullopt);
             setAlankarPracticeControlsLocked (false); // practice is over - the metronome, taal and pattern are the user's again
 
@@ -601,6 +650,8 @@ void MainComponent::timerCallback()
             const float target = alankarEngine->currentStepTargetCents();
             pitchGraph.setTargetBand (std::make_pair (target - AlankarPracticeEngine::kInTuneToleranceCents,
                                                        target + AlankarPracticeEngine::kInTuneToleranceCents));
+
+            swarChipRow.setCurrentIndex (alankarEngine->currentStepIndex());
 
             const auto liveSummary = alankarEngine->getSummary();
             alankarResultsLabel.setText (
@@ -649,36 +700,59 @@ void MainComponent::paint (juce::Graphics& g)
 void MainComponent::resized()
 {
     auto area = getLocalBounds();
-    statusLabel.setBounds (area.removeFromTop (60));
+    statusLabel.setBounds (area.removeFromTop (44));
 
-    // Only the slider is positioned: tanpuraVolumeLabel is attached to it, so
-    // JUCE re-places the label itself whenever the slider moves. The left inset
-    // is what the attached label is drawn into - an attached label's width is
-    // clamped to its owner's x, so a slider at x == 0 would leave no room and
-    // the label would collapse to nothing.
-    tanpuraVolumeSlider.setBounds (area.removeFromTop (30).withTrimmedLeft (80).withTrimmedRight (10));
+    // Compact 3-column row: Tanpura | Taal (+ start/stop) | Metronome BPM,
+    // each with its own caption above it - replaces the original layout's
+    // three separate 30px-tall rows (one control per row, caption to its
+    // left) with one ~50px row, freeing meaningfully more vertical space
+    // for the graph/analytics panel below.
+    auto controlsRow = area.removeFromTop (52);
+    auto tanpuraColumn = controlsRow.removeFromLeft (controlsRow.getWidth() / 3).reduced (4, 0);
+    auto taalColumn = controlsRow.removeFromLeft ((controlsRow.getWidth() * 4) / 7).reduced (4, 0);
+    auto bpmColumn = controlsRow.reduced (4, 0);
 
-    auto metronomeControlsRow = area.removeFromTop (30);
-    metronomeTaalCombo.setBounds (metronomeControlsRow.removeFromLeft (150).reduced (2));
-    metronomeStartStopButton.setBounds (metronomeControlsRow.removeFromRight (150).reduced (2));
+    tanpuraVolumeLabel.setBounds (tanpuraColumn.removeFromTop (18));
+    tanpuraColumn.removeFromTop (2);
+    tanpuraVolumeSlider.setBounds (tanpuraColumn.removeFromTop (28));
 
-    // Same attached-label reasoning as tanpuraVolumeSlider above, with a
-    // wider left inset since "Metronome BPM" is a longer label than "Tanpura".
-    metronomeBpmSlider.setBounds (area.removeFromTop (30).withTrimmedLeft (140).withTrimmedRight (10));
+    metronomeTaalLabel.setBounds (taalColumn.removeFromTop (18));
+    taalColumn.removeFromTop (2);
+    auto taalControlsRow = taalColumn.removeFromTop (28);
+    metronomeStartStopButton.setBounds (taalControlsRow.removeFromRight (28));
+    taalControlsRow.removeFromRight (8);
+    metronomeTaalCombo.setBounds (taalControlsRow);
+
+    metronomeBpmLabel.setBounds (bpmColumn.removeFromTop (18));
+    bpmColumn.removeFromTop (2);
+    metronomeBpmSlider.setBounds (bpmColumn.removeFromTop (28));
 
     beatIndicator.setBounds (area.removeFromTop (50));
 
     diagnosticsLabel.setBounds (area.removeFromTop (18)); // TEMPORARY DIAGNOSTICS
 
-    auto alankarControlsRow = area.removeFromTop (30);
-    modeCombo.setBounds (alankarControlsRow.removeFromLeft (150).reduced (2));
-    alankarStartButton.setBounds (alankarControlsRow.removeFromRight (150).reduced (2));
-    alankarPatternCombo.setBounds (alankarControlsRow.reduced (2));
+    auto modeRow = area.removeFromTop (32);
+    modeCombo.setBounds (modeRow.removeFromLeft (190).reduced (2));
+    sessionHistoryButton.setBounds (modeRow.removeFromRight (150).reduced (2));
 
+    // Pattern combo, "Start Alankar Practice" and the swar-chip row only
+    // take up layout space in Alankar mode - modeCombo.onChange calls
+    // resized() explicitly whenever the mode changes (a visibility change
+    // alone doesn't retrigger layout), so this stays in sync.
+    if (modeCombo.getSelectedId() == 2)
+    {
+        area.removeFromTop (8);
+        auto patternRow = area.removeFromTop (32);
+        alankarStartButton.setBounds (patternRow.removeFromRight (150).reduced (2));
+        patternRow.removeFromRight (8);
+        alankarPatternCombo.setBounds (patternRow.reduced (2));
+
+        area.removeFromTop (8);
+        swarChipRow.setBounds (area.removeFromTop (30));
+    }
+
+    area.removeFromTop (6);
     alankarResultsLabel.setBounds (area.removeFromTop (18));
-
-    auto historyRow = area.removeFromTop (30);
-    sessionHistoryButton.setBounds (historyRow.removeFromRight (150).reduced (2));
 
     // Mutually exclusive, same bounds - see sessionHistoryButton.onClick above.
     pitchGraph.setBounds (area);

@@ -8,6 +8,7 @@
 #include "../ui/PitchGraphComponent.h"
 #include "../ui/BeatIndicatorComponent.h"
 #include "../ui/AnalyticsComponent.h"
+#include "../ui/SwarChipRowComponent.h"
 #include "../practice/AlankarPattern.h"
 #include "../practice/AlankarPracticeEngine.h"
 #include "../profile/ProfileStore.h"
@@ -56,6 +57,19 @@ private:
     // pitch pipeline re-entering Calibrating - so the two can't drift apart.
     void cancelAlankarPractice();
 
+    // Re-derives swarChipRow's sequence from whichever pattern is currently
+    // selected in alankarPatternCombo, with step 0 highlighted (i.e. "no
+    // run active yet"). Called both when Alankar mode is first selected and
+    // whenever the pattern combo's own selection changes - the two call
+    // sites would otherwise have to stay in sync by hand.
+    void refreshSwarChipRowFromSelectedPattern();
+
+    // metronomeStartStopButton is now an icon-only square (see its
+    // declaration below) - this is the one place its two glyphs are picked,
+    // so the toggle handler and alankarStartButton.onClick (which also
+    // forces the button into its "running" state) can't drift apart.
+    void updateMetronomeStartStopButtonText();
+
     juce::String activeProfileName;
     std::optional<float> pendingKnownSaHz;
     ProfileStore profileStore { getStandardProfileStoreFile() };
@@ -77,8 +91,13 @@ private:
     juce::Slider tanpuraVolumeSlider;
     juce::Label tanpuraVolumeLabel;
     juce::ComboBox metronomeTaalCombo;
+    juce::Label metronomeTaalLabel;
     juce::Slider metronomeBpmSlider;
     juce::Label metronomeBpmLabel;
+    // A small square icon button (glyph swaps between the two - see
+    // updateMetronomeStartStopButtonText() in the .cpp) rather than a full-
+    // width "Start metronome"/"Stop metronome" label, so it fits paired
+    // alongside metronomeTaalCombo in the compact Tanpura/Taal/BPM row.
     juce::TextButton metronomeStartStopButton;
     BeatIndicatorComponent beatIndicator { metronomeSource };
     PitchGraphComponent pitchGraph;
@@ -96,6 +115,10 @@ private:
     juce::ComboBox modeCombo;
     juce::ComboBox alankarPatternCombo;
     juce::TextButton alankarStartButton;
+    // Shows the selected pattern's swar sequence with the current (or, before
+    // a run starts, the 0th) step highlighted - visible only in Alankar mode,
+    // alongside alankarPatternCombo/alankarStartButton/alankarResultsLabel.
+    SwarChipRowComponent swarChipRow;
     juce::Label alankarResultsLabel;
     std::unique_ptr<AlankarPracticeEngine> alankarEngine;
     // Captured when a practice run starts (see alankarStartButton.onClick),

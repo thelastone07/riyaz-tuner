@@ -11,28 +11,28 @@ findings from the whole-branch alankar-practice review (commits
 **For the next sub-project (Accuracy scoring + session recording), which the
 spec commits to reusing `AlankarSummary` verbatim:**
 
-- **`AlankarPracticeEngine::onPitchReading()` attributes frames by delivery
+- ~~**`AlankarPracticeEngine::onPitchReading()` attributes frames by delivery
   time, not capture time, and `framesTotal` counts delivered pitch-worker UI
-  updates rather than elapsed time.** This wave only corrected the doc
-  comments to describe this honestly (`src/practice/AlankarPracticeEngine.h`)
-  — the underlying model is unchanged. Before persisting this data, widen
-  `onPitchReading(float centsFromSa, uint64_t timestampMs)` (the caller
-  already has `update.timestampMs` at the call site) and use it to attribute
-  frames to the step that was actually current at capture time, not
-  delivery time — a real design question for that sub-project's own
-  brainstorming, not a one-line fix.
+  updates rather than elapsed time.**~~ **Fixed (2026-09-01, sub-project 3,
+  commit `4e1dc2a`).** `onPitchReading`/`onBeatElapsed` now carry
+  `PitchPipelineUpdate::timestampMs`; `framesInTune`/`framesTotal` became
+  `msInTune`/`msTotal`, genuinely time-weighted with capture-time attribution
+  (including a late-straggler redirect and a fix for the tail-of-finished-run
+  drop this same note flagged). See
+  `docs/superpowers/specs/2026-08-28-accuracy-scoring-design.md`.
 - **Test-coverage gaps that only show at the whole-plan level, not any one
-  task's scoped review:** no test exercises `onBeatElapsed()`/
-  `onPitchReading()`'s no-op guards on an already-finished engine, nor
-  `getSummary()` on a finished engine — which is precisely the state
-  `MainComponent` parks the engine in for the rest of a session, so it's
-  production-reachable, not theoretical. There's also no structural
-  assertion of the reversal invariant itself (`seq[i] == seq[2N-1-i]` and
-  `size() == 2 * ascendingSize`, asserted in a loop over all five pattern
-  ids) — the five literal per-pattern tests cover today's data well, but a
-  structural test is what would catch a *sixth* pattern (which the spec
-  explicitly anticipates as "additive, not a redesign") shipping with a
-  mis-built descending half.
+  task's scoped review:** no test exercises `onBeatElapsed()`'s no-op guard
+  on an already-finished engine specifically (calling it again post-finish
+  and asserting `stepIndex`/state are unchanged) — `onPitchReading()`'s
+  finished-engine path and `getSummary()` on a finished engine are now
+  covered, by the tail-of-finished-run-attribution test added in the fix
+  above. There's also still no structural assertion of the reversal
+  invariant itself (`seq[i] == seq[2N-1-i]` and `size() == 2 *
+  ascendingSize`, asserted in a loop over all five pattern ids) — the five
+  literal per-pattern tests cover today's data well, but a structural test
+  is what would catch a *sixth* pattern (which the spec explicitly
+  anticipates as "additive, not a redesign") shipping with a mis-built
+  descending half.
 
 **Narrow, accepted residuals (not worth fixing given how rarely they're
 reachable):**

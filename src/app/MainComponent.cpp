@@ -241,7 +241,31 @@ MainComponent::MainComponent (const juce::String& profileNameIn, std::optional<f
     addAndMakeVisible (alankarResultsLabel);
     alankarResultsLabel.setVisible (false);
 
+    addAndMakeVisible (sessionHistoryButton);
+    sessionHistoryButton.setButtonText ("Session History");
+    sessionHistoryButton.onClick = [this]
+    {
+        const bool showingHistory = analyticsView.isVisible();
+        if (showingHistory)
+        {
+            analyticsView.setVisible (false);
+            pitchGraph.setVisible (true);
+            sessionHistoryButton.setButtonText ("Session History");
+        }
+        else
+        {
+            // Freshly loaded every time the view opens (SessionStore does no
+            // in-memory caching - same pattern as ProfileStore), so a run
+            // completed since the last time this was open is reflected.
+            analyticsView.setSessions (sessionStore.loadAllForProfile (activeProfileName));
+            analyticsView.setVisible (true);
+            pitchGraph.setVisible (false);
+            sessionHistoryButton.setButtonText ("Back to practice");
+        }
+    };
+
     addAndMakeVisible (pitchGraph);
+    addChildComponent (analyticsView); // hidden until sessionHistoryButton is pressed - addChildComponent does not show it
 
     setSize (600, 560);
 
@@ -646,5 +670,10 @@ void MainComponent::resized()
 
     alankarResultsLabel.setBounds (area.removeFromTop (18));
 
+    auto historyRow = area.removeFromTop (30);
+    sessionHistoryButton.setBounds (historyRow.removeFromRight (150).reduced (2));
+
+    // Mutually exclusive, same bounds - see sessionHistoryButton.onClick above.
     pitchGraph.setBounds (area);
+    analyticsView.setBounds (area);
 }

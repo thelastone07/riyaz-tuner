@@ -7,6 +7,7 @@
 #include "../audio/worker/PitchWorker.h"
 #include "../ui/PitchGraphComponent.h"
 #include "../ui/BeatIndicatorComponent.h"
+#include "../ui/AnalyticsComponent.h"
 #include "../practice/AlankarPattern.h"
 #include "../practice/AlankarPracticeEngine.h"
 #include "../profile/ProfileStore.h"
@@ -81,6 +82,12 @@ private:
     juce::TextButton metronomeStartStopButton;
     BeatIndicatorComponent beatIndicator { metronomeSource };
     PitchGraphComponent pitchGraph;
+    // Toggled by sessionHistoryButton, mutually exclusive with pitchGraph -
+    // the two share the same bounds (see resized()) and only one is ever
+    // visible at a time. Always available (not gated behind Alankar mode):
+    // history is worth checking even from Free practice mode.
+    juce::TextButton sessionHistoryButton;
+    AnalyticsComponent analyticsView;
     juce::Label diagnosticsLabel; // TEMPORARY DIAGNOSTICS
 
     PitchPipelineUpdate lastUpdate { PitchPipelinePhase::Calibrating };

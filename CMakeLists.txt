@@ -103,6 +103,7 @@ target_compile_definitions(riyaaz_practice PUBLIC
 add_library(riyaaz_profile STATIC
     src/profile/ProfileStore.cpp
     src/profile/SessionStore.cpp
+    src/profile/SessionAnalytics.cpp
 )
 target_include_directories(riyaaz_profile PUBLIC src)
 target_link_libraries(riyaaz_profile PUBLIC juce::juce_core)
@@ -129,6 +130,7 @@ target_sources(riyaaz_tests PRIVATE
     src/practice/AlankarPracticeEngineTests.cpp
     src/profile/ProfileStoreTests.cpp
     src/profile/SessionStoreTests.cpp
+    src/profile/SessionAnalyticsTests.cpp
     src/ui/PitchGraphComponent.cpp
     src/ui/PitchGraphPointBufferTests.cpp
     src/TestMain.cpp
@@ -171,6 +173,7 @@ target_sources(riyaaz_app PRIVATE
     # constructor/addPoint()/paint() symbols.
     src/ui/PitchGraphComponent.cpp
     src/ui/BeatIndicatorComponent.cpp
+    src/ui/AnalyticsComponent.cpp
     src/profile/ProfilePickerComponent.cpp
 )
 target_link_libraries(riyaaz_app PRIVATE

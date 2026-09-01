@@ -14,7 +14,7 @@ AlankarPracticeEngine::AlankarPracticeEngine (AlankarPatternId patternId)
         stepResults.push_back ({ step.swar, step.octaveOffset, 0, 0 });
 }
 
-void AlankarPracticeEngine::onBeatElapsed()
+void AlankarPracticeEngine::onBeatElapsed (uint64_t latestKnownTimestampMs)
 {
     if (isFinished())
         return;
@@ -24,21 +24,42 @@ void AlankarPracticeEngine::onBeatElapsed()
     {
         beatsIntoCurrentStep = 0;
         ++stepIndex;
+        currentStepStartTimestampMs = latestKnownTimestampMs;
     }
 }
 
-void AlankarPracticeEngine::onPitchReading (float centsFromSa)
+void AlankarPracticeEngine::onPitchReading (float centsFromSa, uint64_t timestampMs)
 {
-    if (isFinished())
-        return;
+    // Determine the target step. A reading captured before the current
+    // step's recorded start is a late-arriving straggler from the PREVIOUS
+    // step's tail (inference latency + async delivery routinely land it
+    // after the next step has already begun) - redirect it there instead of
+    // crediting the wrong step. This is also what lets a just-finished
+    // engine still credit the last real step's tail readings (see below),
+    // rather than the old behaviour of silently dropping them.
+    int targetIndex = stepIndex;
+    if (currentStepStartTimestampMs != 0 && timestampMs < currentStepStartTimestampMs)
+        targetIndex = stepIndex - 1;
 
-    const auto& step = pattern.fullSequence()[(size_t) stepIndex];
+    if (targetIndex < 0 || targetIndex >= totalSteps())
+        return; // nothing valid to attribute to - a reading before any step has started, or no eligible late step at the tail of a finished run
+
+    // Weight = elapsed time since the previous reading, capped. The very
+    // first reading ever (or a non-advancing/out-of-order timestamp)
+    // contributes nothing - acceptable given it's at most one sample out of
+    // many over a real run.
+    uint64_t weight = 0;
+    if (lastReadingTimestampMs != 0 && timestampMs > lastReadingTimestampMs)
+        weight = std::min (timestampMs - lastReadingTimestampMs, kMaxReadingGapMs);
+    lastReadingTimestampMs = timestampMs;
+
+    const auto& step = pattern.fullSequence()[(size_t) targetIndex];
     const float targetCents = centsFromSaForSwar (step.swar, step.octaveOffset);
 
-    auto& result = stepResults[(size_t) stepIndex];
-    ++result.framesTotal;
+    auto& result = stepResults[(size_t) targetIndex];
+    result.msTotal += weight;
     if (std::abs (centsFromSa - targetCents) <= kInTuneToleranceCents)
-        ++result.framesInTune;
+        result.msInTune += weight;
 }
 
 bool AlankarPracticeEngine::isFinished() const
@@ -80,22 +101,22 @@ AlankarSummary AlankarPracticeEngine::getSummary() const
     AlankarSummary summary;
     summary.perStep = stepResults;
 
-    int totalInTune = 0;
-    int totalFrames = 0;
-    std::map<Swar, std::pair<int, int>> perSwarTotals; // swar -> (framesInTune, framesTotal)
+    uint64_t totalInTune = 0;
+    uint64_t totalMs = 0;
+    std::map<Swar, std::pair<uint64_t, uint64_t>> perSwarTotals; // swar -> (msInTune, msTotal)
 
     for (const auto& result : stepResults)
     {
-        totalInTune += result.framesInTune;
-        totalFrames += result.framesTotal;
+        totalInTune += result.msInTune;
+        totalMs += result.msTotal;
 
         auto& swarTotals = perSwarTotals[result.swar];
-        swarTotals.first += result.framesInTune;
-        swarTotals.second += result.framesTotal;
+        swarTotals.first += result.msInTune;
+        swarTotals.second += result.msTotal;
     }
 
-    summary.overallTimeInTunePercent = totalFrames > 0
-        ? (100.0f * (float) totalInTune / (float) totalFrames)
+    summary.overallTimeInTunePercent = totalMs > 0
+        ? (100.0f * (float) totalInTune / (float) totalMs)
         : 0.0f;
 
     for (const auto& entry : perSwarTotals)

@@ -188,6 +188,8 @@ MainComponent::MainComponent (const juce::String& profileNameIn, std::optional<f
         const int selectedIndex = alankarPatternCombo.getSelectedId() - 1; // ids are 1-5, array is 0-4
         jassert (juce::isPositiveAndBelow (selectedIndex, (int) std::size (kAlankarPatternIds)));
         alankarEngine = std::make_unique<AlankarPracticeEngine> (kAlankarPatternIds[(size_t) selectedIndex]);
+        alankarSessionStartingBpm = (int) metronomeBpmSlider.getValue();
+        alankarSessionPatternName = AlankarPattern (kAlankarPatternIds[(size_t) selectedIndex]).name();
         lastSeenMetronomeBeats = metronomeSource.getTotalBeatsElapsed();
         // Back to "nothing rendered yet" so timerCallback()'s step-change guard
         // fires on its very first tick of this run and fills in the full
@@ -491,7 +493,7 @@ void MainComponent::pitchWorkerUpdate (const PitchPipelineUpdate& update)
 
             if (alankarEngine != nullptr && ! alankarEngine->isFinished())
             {
-                alankarEngine->onPitchReading (*update.centsFromSa);
+                alankarEngine->onPitchReading (*update.centsFromSa, update.timestampMs);
                 const float target = alankarEngine->currentStepTargetCents();
                 pitchGraph.setTargetBand (std::make_pair (target - AlankarPracticeEngine::kInTuneToleranceCents,
                                                            target + AlankarPracticeEngine::kInTuneToleranceCents));
@@ -514,7 +516,7 @@ void MainComponent::timerCallback()
             if (alankarAwaitingFirstBeat)
                 alankarAwaitingFirstBeat = false; // the reset's own initial triggerBeat(0) just means step 0 has begun, not that a beat has elapsed - absorb it, don't forward it
             else
-                alankarEngine->onBeatElapsed();
+                alankarEngine->onBeatElapsed (lastUpdate.timestampMs);
         }
         lastSeenMetronomeBeats = currentBeats;
 
@@ -534,6 +536,22 @@ void MainComponent::timerCallback()
                         + " (" + juce::String (summary.perSwarTimeInTunePercent.front().second, 1) + "%)";
             }
             alankarResultsLabel.setText (text, juce::dontSendNotification);
+
+            // Record this completed run. Only reached when the engine finishes
+            // on its own (all steps beat-advanced through) - cancelAlankarPractice()
+            // (leaving Alankar mode, or the pipeline re-entering Calibrating
+            // mid-run) never calls into sessionStore, so a cancelled/interrupted
+            // run records nothing, and this is the only call to
+            // sessionStore.append() anywhere in the codebase.
+            AlankarSessionRecord record;
+            record.profileName = activeProfileName;
+            record.patternName = alankarSessionPatternName;
+            record.startingBpm = alankarSessionStartingBpm;
+            record.completedAtEpochMs = juce::Time::getCurrentTime().toMilliseconds();
+            record.overallTimeInTunePercent = summary.overallTimeInTunePercent;
+            for (const auto& entry : summary.perSwarTimeInTunePercent)
+                record.perSwarTimeInTunePercent.push_back ({ swarToString (entry.first), entry.second });
+            sessionStore.append (record);
         }
         // Only when the step actually changed: this callback runs at 30Hz but
         // both the band and the label are functions of the current step alone,

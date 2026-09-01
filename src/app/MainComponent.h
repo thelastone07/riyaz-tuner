@@ -10,6 +10,7 @@
 #include "../practice/AlankarPattern.h"
 #include "../practice/AlankarPracticeEngine.h"
 #include "../profile/ProfileStore.h"
+#include "../profile/SessionStore.h"
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <memory>
 #include <optional>
@@ -57,6 +58,7 @@ private:
     juce::String activeProfileName;
     std::optional<float> pendingKnownSaHz;
     ProfileStore profileStore { getStandardProfileStoreFile() };
+    SessionStore sessionStore { getStandardSessionStoreFile() };
 
     CrepePitchEngine engine { juce::String ("models/crepe/small.onnx") };
     std::unique_ptr<PitchPipeline> pipeline;   // constructed in prepareToPlay(), once the real sample rate is known
@@ -89,6 +91,13 @@ private:
     juce::TextButton alankarStartButton;
     juce::Label alankarResultsLabel;
     std::unique_ptr<AlankarPracticeEngine> alankarEngine;
+    // Captured when a practice run starts (see alankarStartButton.onClick),
+    // so the session record built on completion reflects what was actually
+    // practiced even if the user changes the BPM slider or pattern combo
+    // mid-run (both of which are locked while practice is live, but this
+    // avoids the two ever being able to drift apart regardless).
+    int alankarSessionStartingBpm = 0;
+    juce::String alankarSessionPatternName;
     int lastSeenMetronomeBeats = 0; // matches MetronomeAudioSource::getTotalBeatsElapsed()'s int return type
     // Enabling the metronome from disabled arms a reset that fires triggerBeat(0)
     // almost immediately on the next audio block - meaning "step 0 (Sam) begins

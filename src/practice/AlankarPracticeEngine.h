@@ -1,53 +1,39 @@
 // src/practice/AlankarPracticeEngine.h
 #pragma once
 #include "AlankarPattern.h"
+#include <cstdint>
 #include <utility>
 #include <vector>
 
-// NOTE ON WHAT THE "frames" NUMBERS BELOW ACTUALLY MEASURE. They are a COUNT
-// OF CONFIDENT PITCH-WORKER UPDATES DELIVERED during a step - not a
-// measurement of time. Two consequences, both deliberate for v1 and both
-// worth knowing before these values are treated as durations:
-//   - The delivery RATE is governed by pitch-worker and message-thread
-//     scheduling (PitchWorker coalesces every currently-ready FIFO sample
-//     into one process() call and its async delivery is latest-wins), not by
-//     elapsed time. A step that coincided with a worker stall or a busy
-//     message thread simply contributes fewer frames.
-//   - Attribution is by DELIVERY time, not by the moment the pitch was
-//     actually sung: onPitchReading() carries no timestamp, so a reading is
-//     credited to whichever step is current when it arrives. Inference plus
-//     the async hop means the tail of one step's audio is routinely credited
-//     to the next step.
-// So the percentages derived from them are an APPROXIMATION of time-in-tune,
-// not an exact one - good enough to rank swars against each other within a
-// run, not a precise duration measure. (Timestamped, capture-time attribution
-// is a deliberate later change; it is an API break across all three layers.)
+// Time-in-tune per step, measured against the pipeline's own capture
+// timestamps (see PitchPipelineUpdate::timestampMs) rather than a count of
+// delivered pitch-worker updates - so a step that happened to receive fewer
+// updates (worker stall, busy message thread) isn't under-weighted, and a
+// reading is credited to whichever step was actually being sung when it was
+// captured, not whichever step happened to be current when it arrived.
 struct AlankarStepResult
 {
     Swar swar = Swar::Sa;
     int octaveOffset = 0;
-    int framesInTune = 0;
-    int framesTotal = 0; // 0 if no confident pitch update was ever delivered during this step - happens at very high BPM relative to the pitch engine's ~64ms hop, or if the worker stalled across the whole step; reported as 0% for that step, not an error
+    uint64_t msInTune = 0;
+    uint64_t msTotal = 0; // 0 if no confident pitch update was ever attributed to this step - happens at very high BPM relative to the pitch engine's ~64ms hop, or if the worker stalled across the whole step; reported as 0% for that step, not an error
 };
 
 struct AlankarSummary
 {
     std::vector<AlankarStepResult> perStep;
-    // sum(framesInTune) / sum(framesTotal) across all steps, 0 if no frames at
-    // all. Frame-COUNT weighted, not time-weighted - see the note above: steps
-    // that happened to receive more delivered updates carry more weight.
+    // sum(msInTune) / sum(msTotal) across all steps, 0 if no time attributed at all.
     float overallTimeInTunePercent = 0.0f;
-    // Aggregated across all steps using that swar (any octave), sorted
-    // worst-to-best. Inherits the same frame-count weighting and
-    // delivery-time attribution as the overall figure above, so treat the
-    // ordering as indicative rather than exact.
+    // Aggregated across all steps using that swar (any octave), sorted worst-to-best.
     std::vector<std::pair<Swar, float>> perSwarTimeInTunePercent;
 };
 
 // Pure logic, externally driven - no audio/JUCE-Timer dependency. The
 // caller (MainComponent) is responsible for calling onBeatElapsed() once
 // per real metronome beat boundary, and onPitchReading() for every
-// confident pitch frame while practice is active.
+// confident pitch frame while practice is active - both carrying the pitch
+// pipeline's own capture timestamp (PitchPipelineUpdate::timestampMs), not
+// a delivery-time/wall-clock stamp, so the two stay in the same time domain.
 class AlankarPracticeEngine
 {
 public:
@@ -58,8 +44,16 @@ public:
 
     explicit AlankarPracticeEngine (AlankarPatternId patternId);
 
-    void onBeatElapsed();
-    void onPitchReading (float centsFromSa);
+    // latestKnownTimestampMs: the most recent pipeline capture timestamp
+    // known at the moment this beat boundary is observed (MainComponent
+    // passes its last-seen PitchPipelineUpdate::timestampMs). Marks where
+    // the new current step's readings begin, for onPitchReading()'s
+    // straggler check below.
+    void onBeatElapsed (uint64_t latestKnownTimestampMs);
+
+    // timestampMs is the reading's own capture timestamp (from
+    // PitchPipelineUpdate::timestampMs), not when it was delivered/processed.
+    void onPitchReading (float centsFromSa, uint64_t timestampMs);
 
     bool isFinished() const;
     int currentStepIndex() const;  // valid until isFinished()
@@ -70,9 +64,22 @@ public:
 
 private:
     static constexpr int kBeatsPerStep = 1;
+    // Caps the weight any single reading-to-reading gap can contribute, so a
+    // stall or a pause in singing doesn't get counted as a long stretch of
+    // (in)tune time. Comfortably longer than any realistic hop-to-hop gap
+    // under normal load.
+    static constexpr uint64_t kMaxReadingGapMs = 250;
 
     AlankarPattern pattern;
     int stepIndex = 0;
     int beatsIntoCurrentStep = 0;
     std::vector<AlankarStepResult> stepResults;
+
+    // 0 = "no step boundary recorded yet" (still in step 0, or no beat has
+    // ever advanced the engine). Otherwise the pipeline timestamp at which
+    // the current step (or, for a finished engine, the step boundary that
+    // finished it) began.
+    uint64_t currentStepStartTimestampMs = 0;
+    // 0 = "no reading processed yet".
+    uint64_t lastReadingTimestampMs = 0;
 };

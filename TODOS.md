@@ -148,41 +148,26 @@ Deferred out of the fix wave that closed the four Important findings from the
 whole-branch tanpura review. Each of these is a *proper* fix for something the
 fix wave only partially addressed, plus one portability item.
 
-- **Karplus-Strong tuning still has a residual ~±8 cent error — the proper fix
-  is a fractional (interpolated) delay.** `KarplusStrongString::pluck()` now
-  computes `N = lround(sampleRate/frequencyHz + 0.5)`, which removes the
-  *systematic sharp bias* (the in-place filter's true loop delay is `N - 0.5`
-  samples, so plain rounding always resonated above the target — up to +15
-  cents at realistic tonics) and halves the worst case. But `N` is still an
-  integer, so a quantization error of up to roughly ±8 cents remains. This
-  matters more than a normal tuning nit: the tanpura is the user's tuning
-  reference *and* the UI simultaneously grades their deviation from the exact
-  calibrated Sa in cents, so any drone error shows up as the app disagreeing
-  with itself. Proper fix: interpolate the read position so the total loop
-  delay equals `sampleRate / frequencyHz` exactly — linear interpolation or a
-  first-order allpass tuning filter; the codebase already uses
-  `juce::LagrangeInterpolator` in `CrepePitchEngine`, so fractional delay is
-  not a foreign concept here.
-- **End a string's ring on a measured amplitude/RMS floor rather than a fixed
-  duration.** The fix wave made the cutoff duration-correct — it is now
-  `kMaxRingSeconds = 4.0f` converted to samples at pluck time from the real
-  device rate, instead of a `44100 * 4` raw sample count that silently shrank
-  to 1.84s at 96kHz. That fixes the sample-rate dependence but not the
-  underlying problem: measured t60 is ~8s for a madhya Sa string and ~16s for
-  a mandra Sa, both far longer than 4s, so the string is still audible when it
-  is cut (measured amplitude at the cut is 0.043–0.100 for the lower strings)
-  and the cut is a step discontinuity — a faint click, once per string per
-  pluck cycle. Terminating on an actual amplitude/RMS floor would end the ring
-  at true silence instead of on an arbitrary clock.
-- **`std::rand()` runs on the audio thread inside `pluck()`.** It is called
-  once per delay-line slot to fill the noise burst. On MSVC — the only
-  platform this currently builds for — `rand()` is TLS-backed and lock-free,
-  so this is not a live bug today. On glibc it delegates to `random()`, which
-  takes an internal lock: a hard real-time violation the moment this is built
-  for Linux, and directly contrary to the plan's own "no locks on the hot
-  path" constraint. Replacing it with a `juce::Random` member instance would
-  be both allocation- and lock-free, and would close the separately-known
-  "unseeded `rand()` makes tests non-deterministic" minor in the same edit.
+- ~~**Karplus-Strong tuning still has a residual ~±8 cent error — the proper
+  fix is a fractional (interpolated) delay.**~~ **Fixed (2026-09-02).**
+  `KarplusStrongString` now uses a first-order fractional-delay allpass (the
+  Jaffe/Smith "C filter") to supply the sub-sample remainder of the loop
+  delay exactly, instead of rounding the delay-line length to the nearest
+  integer sample. Verified by the existing 439Hz worst-case test, which now
+  measures well under 1 cent of error (previously ~+8c at that tolerance-
+  proving frequency).
+- ~~**End a string's ring on a measured amplitude/RMS floor rather than a
+  fixed duration.**~~ **Fixed (2026-09-02).** `KarplusStrongString` now tracks
+  a one-pole envelope follower of `|output|` and ends the ring once it drops
+  below `kSilenceFloor` (subject to a `kMinRingSeconds` guard against ending
+  during the pluck's own low-energy moments) rather than on a fixed clock;
+  `kMaxRingSeconds` remains only as a safety net. Ends the ring at true
+  silence instead of on an audible step discontinuity.
+- ~~**`std::rand()` runs on the audio thread inside `pluck()`.**~~ **Fixed
+  (2026-09-02).** Replaced with a per-string `juce::Random` member (allocation-
+  and lock-free, and incidentally makes pluck() noise bursts deterministic
+  given a seed, closing the "unseeded rand() makes tests non-deterministic"
+  minor too).
 - **The tanpura drone can bias re-calibration if it stays audible through a
   device restart.** (Recorded here per the tanpura plan's commitment at
   `2026-08-25-tanpura.md:857`, which was never actually carried out.)

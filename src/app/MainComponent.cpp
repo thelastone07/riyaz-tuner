@@ -44,6 +44,17 @@ void MainComponent::cancelAlankarPractice()
     pitchGraph.setTargetBand (std::nullopt);
     setAlankarPracticeControlsLocked (false); // no practice can be live once the engine is gone
     alankarResultsLabel.setText ("", juce::dontSendNotification);
+
+    alankarPaused = false;
+    alankarPauseButton.setButtonText ("Pause");
+    alankarPauseButton.setVisible (false);
+    // Restores Start to visible only if still in Alankar mode (e.g. the
+    // pipeline re-entering Calibrating mid-run) - if this was called because
+    // the user is LEAVING Alankar mode, modeCombo's own selection has
+    // already changed to Free practice by the time this runs, so this
+    // correctly leaves it hidden rather than fighting modeCombo.onChange's
+    // own setVisible(nowAlankarMode) call just before this one.
+    alankarStartButton.setVisible (modeCombo.getSelectedId() == 2);
 }
 
 TaalType MainComponent::taalTypeForComboId (int comboId)
@@ -65,6 +76,13 @@ void MainComponent::updateMetronomeStartStopButtonText()
     // CharPointer_UTF8 rather than a plain string literal so the glyph is
     // interpreted correctly regardless of the source file's own encoding.
     metronomeStartStopButton.setButtonText (metronomeRunning
+        ? juce::String (juce::CharPointer_UTF8 ("\xE2\x96\xA0"))  // "■"
+        : juce::String (juce::CharPointer_UTF8 ("\xE2\x96\xB6"))); // "▶"
+}
+
+void MainComponent::updateTanpuraToggleButtonText()
+{
+    tanpuraToggleButton.setButtonText (tanpuraEnabled
         ? juce::String (juce::CharPointer_UTF8 ("\xE2\x96\xA0"))  // "■"
         : juce::String (juce::CharPointer_UTF8 ("\xE2\x96\xB6"))); // "▶"
 }
@@ -92,6 +110,20 @@ void MainComponent::refreshSwarChipRowFromSelectedPattern()
 MainComponent::MainComponent (const juce::String& profileNameIn, std::optional<float> knownSaHzIn)
     : activeProfileName (profileNameIn), pendingKnownSaHz (knownSaHzIn)
 {
+    addAndMakeVisible (homeButton);
+    homeButton.setButtonText (juce::CharPointer_UTF8 ("\xE2\x8C\x82")); // "⌂"
+    homeButton.onClick = [this]
+    {
+        // Deferred, not called synchronously: onRequestHome's handler (in
+        // Main.cpp) replaces this component as the window's content, which
+        // would destroy it - and therefore this very onClick lambda's
+        // enclosing call frame - while still executing. Same self-destruction-
+        // during-callback hazard the picker's onResolved dodges with
+        // callAsync; see the comment there.
+        if (onRequestHome)
+            juce::MessageManager::callAsync (onRequestHome);
+    };
+
     addAndMakeVisible (statusLabel);
     statusLabel.setJustificationType (juce::Justification::centred);
     statusLabel.setFont (RiyaazLookAndFeel::bodyFont());
@@ -113,6 +145,15 @@ MainComponent::MainComponent (const juce::String& profileNameIn, std::optional<f
 
     addAndMakeVisible (tanpuraVolumeLabel);
     tanpuraVolumeLabel.setText ("TANPURA", juce::dontSendNotification);
+
+    addAndMakeVisible (tanpuraToggleButton);
+    updateTanpuraToggleButtonText();
+    tanpuraToggleButton.onClick = [this]
+    {
+        tanpuraEnabled = ! tanpuraEnabled;
+        tanpuraSource.setEnabled (tanpuraEnabled);
+        updateTanpuraToggleButtonText();
+    };
 
     // Push the slider's initial value into the source here, on the message
     // thread, while the audio device is still closed - rather than from
@@ -172,19 +213,10 @@ MainComponent::MainComponent (const juce::String& profileNameIn, std::optional<f
 
     addAndMakeVisible (beatIndicator);
 
-    // --- TEMPORARY DIAGNOSTICS ---
-    addAndMakeVisible (diagnosticsLabel);
-    diagnosticsLabel.setFont (juce::Font (juce::FontOptions (12.0f)));
-    diagnosticsLabel.setColour (juce::Label::textColourId, juce::Colours::yellow);
-    diagnosticsLabel.setText ("diag: waiting for worker...", juce::dontSendNotification);
-    // --- END TEMPORARY DIAGNOSTICS ---
-
-    // NOTE: Alankar practice mode's beat-driven step advancement (see
-    // timerCallback()) also depends on this timer running - do not remove
-    // this call as part of any future diagnostics cleanup. 30Hz also matches
-    // the poll rate BeatIndicatorComponent already uses elsewhere in this
-    // codebase, so beat advancement is no coarser than the beat indicator's
-    // own visual resolution.
+    // Drives Alankar practice mode's beat-driven step advancement (see
+    // timerCallback()). 30Hz also matches the poll rate BeatIndicatorComponent
+    // already uses elsewhere in this codebase, so beat advancement is no
+    // coarser than the beat indicator's own visual resolution.
     startTimerHz (30);
 
     addAndMakeVisible (modeCombo);
@@ -196,6 +228,7 @@ MainComponent::MainComponent (const juce::String& profileNameIn, std::optional<f
         const bool nowAlankarMode = (modeCombo.getSelectedId() == 2);
         alankarPatternCombo.setVisible (nowAlankarMode);
         alankarStartButton.setVisible (nowAlankarMode);
+        alankarLoopToggle.setVisible (nowAlankarMode);
         swarChipRow.setVisible (nowAlankarMode);
         alankarResultsLabel.setVisible (nowAlankarMode);
 
@@ -284,8 +317,54 @@ MainComponent::MainComponent (const juce::String& profileNameIn, std::optional<f
         // rebuilds the sequence and resets the highlighted index to 0 together.
         refreshSwarChipRowFromSelectedPattern();
 
+        alankarPaused = false;
+        alankarPauseButton.setButtonText ("Pause");
+        alankarPauseButton.setVisible (true);
+        alankarPauseButton.setEnabled (true);
+        alankarStartButton.setVisible (false); // shares alankarPauseButton's slot (see resized()) - restored in cancelAlankarPractice() and the finish branch's non-loop path
+
         alankarResultsLabel.setText ("Practicing...", juce::dontSendNotification);
     };
+
+    addAndMakeVisible (alankarPauseButton);
+    alankarPauseButton.setVisible (false); // only meaningful once a run is live - see alankarStartButton.onClick above
+    alankarPauseButton.onClick = [this]
+    {
+        if (alankarEngine == nullptr || alankarEngine->isFinished())
+            return; // defensive only - the button is hidden outside a live run
+
+        alankarPaused = ! alankarPaused;
+        alankarPauseButton.setButtonText (alankarPaused ? "Resume" : "Pause");
+
+        if (alankarPaused)
+        {
+            metronomeSource.setEnabled (false);
+            metronomeRunning = false;
+        }
+        else
+        {
+            // Same disable-then-enable idiom alankarStartButton.onClick uses to
+            // start a run: MetronomeAudioSource only arms a clock reset on a
+            // false->true transition (see its setEnabled()), and the source is
+            // already sitting at enabled==false here (the Pause branch above
+            // just set it), so this one call re-arms the reset that fires
+            // triggerBeat(0) on the next block - which alankarAwaitingFirstBeat
+            // below tells timerCallback() to absorb rather than forward as a
+            // real step advance, exactly as it does for a fresh Start. Net
+            // effect: the pacing click resumes clicking from "now", and the
+            // pattern resumes from the step it was paused on - not step 0.
+            alankarAwaitingFirstBeat = true;
+            lastSeenMetronomeBeats = metronomeSource.getTotalBeatsElapsed();
+            metronomeSource.setEnabled (true);
+            metronomeRunning = true;
+        }
+
+        updateMetronomeStartStopButtonText(); // shares the same running/stopped glyph convention as the free-practice start/stop button
+    };
+
+    addAndMakeVisible (alankarLoopToggle);
+    alankarLoopToggle.setButtonText ("Loop");
+    alankarLoopToggle.setVisible (false); // only shown in Alankar mode, same as alankarPatternCombo etc.
 
     addAndMakeVisible (swarChipRow);
     swarChipRow.setVisible (false); // hidden until Alankar mode is selected, same as alankarPatternCombo
@@ -531,24 +610,18 @@ void MainComponent::pitchWorkerUpdate (const PitchPipelineUpdate& update)
             statusLabel.setText ("Calibrated!   " + saText, juce::dontSendNotification);
             alankarStartButton.setEnabled (true);
 
-            if (pendingKnownSaHz.has_value())
-            {
-                // Reusing a saved Sa - deliberately quieter than a fresh
-                // calibration: no tanpura auto-start, and nothing new to
-                // save since the Sa didn't change.
-            }
-            else
-            {
-                // Start the drone on the Sa we just calibrated to. Both setters are
-                // atomic stores consumed by the audio thread on its next block, so
-                // calling them from the message thread here is fine. setSa() before
-                // setEnabled() so the very first audible block is already in tune.
-                tanpuraSource.setSa (update.saHz);
-                tanpuraSource.setEnabled (true);
+            // Tune the drone to Sa regardless of which path got here (an
+            // atomic store consumed by the audio thread on its next block, so
+            // calling it from the message thread here is fine) - it does NOT
+            // auto-enable the drone though; the user starts it themselves via
+            // tanpuraToggleButton, whenever they do it'll already be in tune.
+            tanpuraSource.setSa (update.saHz);
 
+            if (! pendingKnownSaHz.has_value())
+            {
                 // A real calibration just succeeded (new profile, or an
                 // existing one's "Recalibrate") - persist the fresh Sa for
-                // next time.
+                // next time. Reusing a saved Sa skips this: nothing new to save.
                 profileStore.save ({ activeProfileName, update.saHz });
             }
         }
@@ -571,7 +644,7 @@ void MainComponent::pitchWorkerUpdate (const PitchPipelineUpdate& update)
         {
             pitchGraph.addPoint (update.timestampMs, *update.centsFromSa);
 
-            if (alankarEngine != nullptr && ! alankarEngine->isFinished())
+            if (alankarEngine != nullptr && ! alankarEngine->isFinished() && ! alankarPaused)
             {
                 alankarEngine->onPitchReading (*update.centsFromSa, update.timestampMs);
                 const float target = alankarEngine->currentStepTargetCents();
@@ -602,12 +675,6 @@ void MainComponent::timerCallback()
 
         if (alankarEngine->isFinished())
         {
-            metronomeSource.setEnabled (false);
-            metronomeRunning = false;
-            updateMetronomeStartStopButtonText();
-            pitchGraph.setTargetBand (std::nullopt);
-            setAlankarPracticeControlsLocked (false); // practice is over - the metronome, taal and pattern are the user's again
-
             const auto summary = alankarEngine->getSummary();
             juce::String text = "Done! Overall: " + juce::String (summary.overallTimeInTunePercent, 1) + "% in tune.";
             if (! summary.perSwarTimeInTunePercent.empty())
@@ -615,14 +682,15 @@ void MainComponent::timerCallback()
                 text += "  Weakest: " + swarToString (summary.perSwarTimeInTunePercent.front().first)
                         + " (" + juce::String (summary.perSwarTimeInTunePercent.front().second, 1) + "%)";
             }
-            alankarResultsLabel.setText (text, juce::dontSendNotification);
 
-            // Record this completed run. Only reached when the engine finishes
-            // on its own (all steps beat-advanced through) - cancelAlankarPractice()
-            // (leaving Alankar mode, or the pipeline re-entering Calibrating
-            // mid-run) never calls into sessionStore, so a cancelled/interrupted
-            // run records nothing, and this is the only call to
-            // sessionStore.append() anywhere in the codebase.
+            // Record this completed run before either branch below - looping or
+            // stopping - so a run always gets exactly one session record
+            // regardless of what happens next. Only reached when the engine
+            // finishes on its own (all steps beat-advanced through) -
+            // cancelAlankarPractice() (leaving Alankar mode, or the pipeline
+            // re-entering Calibrating mid-run) never calls into sessionStore, so
+            // a cancelled/interrupted run records nothing, and this is the only
+            // call to sessionStore.append() anywhere in the codebase.
             AlankarSessionRecord record;
             record.profileName = activeProfileName;
             record.patternName = alankarSessionPatternName;
@@ -632,6 +700,52 @@ void MainComponent::timerCallback()
             for (const auto& entry : summary.perSwarTimeInTunePercent)
                 record.perSwarTimeInTunePercent.push_back ({ swarToString (entry.first), entry.second });
             sessionStore.append (record);
+
+            if (alankarLoopToggle.getToggleState())
+            {
+                // Loop is on: go straight into another run of the same
+                // pattern instead of stopping. Mirrors alankarStartButton's
+                // onClick (same pattern, same "absorb the reset's own
+                // triggerBeat(0)" dance via alankarAwaitingFirstBeat) rather
+                // than calling it directly - this path must NOT re-read
+                // alankarPatternCombo/re-lock controls/re-stamp
+                // alankarSessionStartingBpm, all of which are already correct
+                // and, for the pattern combo, locked read-only for the
+                // duration precisely so it can't disagree with what's running.
+                const int selectedIndex = alankarPatternCombo.getSelectedId() - 1;
+                jassert (juce::isPositiveAndBelow (selectedIndex, (int) std::size (kAlankarPatternIds)));
+                alankarEngine = std::make_unique<AlankarPracticeEngine> (kAlankarPatternIds[(size_t) selectedIndex]);
+                lastRenderedAlankarStepIndex = -1;
+                alankarAwaitingFirstBeat = true;
+
+                // Disable-then-enable to force the false->true edge
+                // MetronomeAudioSource requires to arm a fresh clock reset -
+                // see alankarPauseButton's onClick for the same idiom spelled
+                // out in full. The metronome is already enabled and ticking
+                // at this exact point (this is the tail of the run that just
+                // finished), so a bare setEnabled(true) here would be a no-op.
+                metronomeSource.setEnabled (false);
+                metronomeSource.setEnabled (true);
+
+                const float target = alankarEngine->currentStepTargetCents();
+                pitchGraph.setTargetBand (std::make_pair (target - AlankarPracticeEngine::kInTuneToleranceCents,
+                                                           target + AlankarPracticeEngine::kInTuneToleranceCents));
+                refreshSwarChipRowFromSelectedPattern();
+
+                alankarResultsLabel.setText (text + "   Looping...", juce::dontSendNotification);
+            }
+            else
+            {
+                metronomeSource.setEnabled (false);
+                metronomeRunning = false;
+                updateMetronomeStartStopButtonText();
+                pitchGraph.setTargetBand (std::nullopt);
+                setAlankarPracticeControlsLocked (false); // practice is over - the metronome, taal and pattern are the user's again
+                alankarPauseButton.setVisible (false);
+                alankarStartButton.setVisible (true); // shares alankarPauseButton's slot - see resized()
+
+                alankarResultsLabel.setText (text, juce::dontSendNotification);
+            }
         }
         // Only when the step actually changed: this callback runs at 30Hz but
         // both the band and the label are functions of the current step alone,
@@ -661,36 +775,7 @@ void MainComponent::timerCallback()
                 juce::dontSendNotification);
         }
     }
-
-    // --- TEMPORARY DIAGNOSTICS ---
-    // Runs on the message thread (juce::Timer callbacks always do), polling the
-    // worker's atomics independently of pitchWorkerUpdate() - so this keeps
-    // updating even if the worker has stalled and pitchWorkerUpdate() has
-    // stopped firing entirely, which is exactly the distinction under
-    // investigation (audio still flowing in vs. the worker genuinely stuck).
-    if (worker == nullptr)
-    {
-        diagnosticsLabel.setText ("diag: no worker (not calibrating yet / device not ready)", juce::dontSendNotification);
-        return;
-    }
-
-    const auto pushed = worker->getTotalSamplesPushed();
-    const auto dropped = worker->getTotalSamplesDropped();
-    const auto drains = worker->getTotalDrainsProcessed();
-    const auto lastMs = worker->getLastDrainDurationMs();
-    const auto lastSamples = worker->getLastDrainSampleCount();
-    const auto peak = worker->getLastPushedPeakAbs();
-    const double dropPct = pushed > 0 ? (100.0 * (double) dropped / (double) pushed) : 0.0;
-
-    diagnosticsLabel.setText (
-        "diag: pushed=" + juce::String (pushed)
-            + " dropped=" + juce::String (dropped) + " (" + juce::String (dropPct, 2) + "%)"
-            + "  drains=" + juce::String (drains)
-            + "  last=" + juce::String (lastMs, 1) + "ms/" + juce::String (lastSamples) + "smp"
-            + "  MIC PEAK=" + juce::String (peak, 4),
-        juce::dontSendNotification);
 }
-// --- END TEMPORARY DIAGNOSTICS ---
 
 void MainComponent::paint (juce::Graphics& g)
 {
@@ -700,7 +785,9 @@ void MainComponent::paint (juce::Graphics& g)
 void MainComponent::resized()
 {
     auto area = getLocalBounds();
-    statusLabel.setBounds (area.removeFromTop (44));
+    auto statusRow = area.removeFromTop (44);
+    homeButton.setBounds (statusRow.removeFromLeft (44).reduced (6));
+    statusLabel.setBounds (statusRow);
 
     // Compact 3-column row: Tanpura | Taal (+ start/stop) | Metronome BPM,
     // each with its own caption above it - replaces the original layout's
@@ -714,7 +801,10 @@ void MainComponent::resized()
 
     tanpuraVolumeLabel.setBounds (tanpuraColumn.removeFromTop (18));
     tanpuraColumn.removeFromTop (2);
-    tanpuraVolumeSlider.setBounds (tanpuraColumn.removeFromTop (28));
+    auto tanpuraControlsRow = tanpuraColumn.removeFromTop (28);
+    tanpuraToggleButton.setBounds (tanpuraControlsRow.removeFromRight (28));
+    tanpuraControlsRow.removeFromRight (8);
+    tanpuraVolumeSlider.setBounds (tanpuraControlsRow);
 
     metronomeTaalLabel.setBounds (taalColumn.removeFromTop (18));
     taalColumn.removeFromTop (2);
@@ -729,8 +819,6 @@ void MainComponent::resized()
 
     beatIndicator.setBounds (area.removeFromTop (50));
 
-    diagnosticsLabel.setBounds (area.removeFromTop (18)); // TEMPORARY DIAGNOSTICS
-
     auto modeRow = area.removeFromTop (32);
     modeCombo.setBounds (modeRow.removeFromLeft (190).reduced (2));
     sessionHistoryButton.setBounds (modeRow.removeFromRight (150).reduced (2));
@@ -743,7 +831,15 @@ void MainComponent::resized()
     {
         area.removeFromTop (8);
         auto patternRow = area.removeFromTop (32);
-        alankarStartButton.setBounds (patternRow.removeFromRight (150).reduced (2));
+        alankarLoopToggle.setBounds (patternRow.removeFromRight (64).reduced (2));
+        // Pause/Resume shares Start's slot rather than sitting beside it -
+        // the two are never both visible at once (Start hides once
+        // alankarPauseButton is shown, and cancelAlankarPractice() puts
+        // things back the other way), so no dead space is spent on
+        // whichever one is currently hidden.
+        auto startPauseSlot = patternRow.removeFromRight (140).reduced (2);
+        alankarStartButton.setBounds (startPauseSlot);
+        alankarPauseButton.setBounds (startPauseSlot);
         patternRow.removeFromRight (8);
         alankarPatternCombo.setBounds (patternRow.reduced (2));
 

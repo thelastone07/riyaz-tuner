@@ -14,17 +14,22 @@
 #include "../profile/ProfileStore.h"
 #include "../profile/SessionStore.h"
 #include <juce_audio_utils/juce_audio_utils.h>
+#include <functional>
 #include <memory>
 #include <optional>
 
-// --- TEMPORARY DIAGNOSTICS (2026-08-28) --- see PitchWorker.h. Remove once
-// root cause of the "graph doesn't react / gets stuck" regression is
-// confirmed.
 class MainComponent : public juce::AudioAppComponent, private PitchWorker::Listener, private juce::Timer
 {
 public:
     explicit MainComponent (const juce::String& profileNameIn, std::optional<float> knownSaHzIn);
     ~MainComponent() override;
+
+    // Fired when the user presses the Home button, to go back to the profile
+    // picker (recalibrate, switch profile, or use a different saved Sa). Not
+    // handled here - MainComponent has no knowledge of MainWindow/the picker -
+    // MainWindow wires this to swap its content back, the same way
+    // ProfilePickerComponent::onResolved is wired the other direction.
+    std::function<void()> onRequestHome;
 
     void prepareToPlay (int samplesPerBlockExpected, double sampleRate) override;
     void getNextAudioBlock (const juce::AudioSourceChannelInfo& bufferToFill) override;
@@ -34,7 +39,7 @@ public:
     void resized() override;
 
 private:
-    void timerCallback() override; // TEMPORARY DIAGNOSTICS
+    void timerCallback() override; // drives Alankar practice mode's beat-driven step advancement
     void pitchWorkerUpdate (const PitchPipelineUpdate& update) override;
     static TaalType taalTypeForComboId (int comboId);
 
@@ -70,6 +75,10 @@ private:
     // forces the button into its "running" state) can't drift apart.
     void updateMetronomeStartStopButtonText();
 
+    // Same reasoning as updateMetronomeStartStopButtonText() above, for
+    // tanpuraToggleButton's own two glyphs.
+    void updateTanpuraToggleButtonText();
+
     juce::String activeProfileName;
     std::optional<float> pendingKnownSaHz;
     ProfileStore profileStore { getStandardProfileStoreFile() };
@@ -87,9 +96,20 @@ private:
     TanpuraAudioSource tanpuraSource;
     MetronomeAudioSource metronomeSource;
 
+    // Top-left, alongside statusLabel (see resized()) - the only way back to
+    // the profile picker (recalibrate Sa, or switch to/create another
+    // profile) once MainComponent is up; there is otherwise no in-app path
+    // back to it short of quitting and relaunching.
+    juce::TextButton homeButton;
     juce::Label statusLabel;
     juce::Slider tanpuraVolumeSlider;
     juce::Label tanpuraVolumeLabel;
+    // Manual on/off for the drone - tanpuraSource no longer auto-enables
+    // itself the moment calibration succeeds (see pitchWorkerUpdate()), so
+    // this is the only way to start it. Same icon-only square-button
+    // convention as metronomeStartStopButton.
+    juce::TextButton tanpuraToggleButton;
+    bool tanpuraEnabled = false;
     juce::ComboBox metronomeTaalCombo;
     juce::Label metronomeTaalLabel;
     juce::Slider metronomeBpmSlider;
@@ -107,7 +127,6 @@ private:
     // history is worth checking even from Free practice mode.
     juce::TextButton sessionHistoryButton;
     AnalyticsComponent analyticsView;
-    juce::Label diagnosticsLabel; // TEMPORARY DIAGNOSTICS
 
     PitchPipelineUpdate lastUpdate { PitchPipelinePhase::Calibrating };
     bool metronomeRunning = false;
@@ -115,6 +134,18 @@ private:
     juce::ComboBox modeCombo;
     juce::ComboBox alankarPatternCombo;
     juce::TextButton alankarStartButton;
+    // Visible only while a practice run is live (see alankarStartButton's
+    // onClick and cancelAlankarPractice()) - toggles between pausing the
+    // pacing click (freezing the current step in place, no beat advancement,
+    // no pitch readings scored) and resuming it from exactly where it left
+    // off. Implemented as a metronome disable/re-enable rather than a
+    // separate mechanism - see its onClick in the .cpp for why that's safe.
+    juce::TextButton alankarPauseButton;
+    // Checked at any time, including before a run starts - read only when a
+    // run finishes (see timerCallback()'s finish branch): if set, the same
+    // pattern restarts immediately instead of stopping.
+    juce::ToggleButton alankarLoopToggle;
+    bool alankarPaused = false;
     // Shows the selected pattern's swar sequence with the current (or, before
     // a run starts, the 0th) step highlighted - visible only in Alankar mode,
     // alongside alankarPatternCombo/alankarStartButton/alankarResultsLabel.

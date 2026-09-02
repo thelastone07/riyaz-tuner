@@ -59,7 +59,16 @@ void PitchGraphComponent::paint (juce::Graphics& g)
     g.fillAll (RiyaazColours::graphPanel);
 
     const auto bounds = getLocalBounds().toFloat();
-    const juce::Font labelFont (juce::FontOptions ("Georgia", 9.0f, juce::Font::plain));
+    const juce::Font labelFont (juce::FontOptions ("Georgia", 12.0f, juce::Font::plain));
+    // Label width/inset for the right-aligned swar labels below - the trace
+    // scrolls left-to-right (oldest to newest, see the point-plotting loop
+    // further down), so the most recent, currently-sung pitch is always at
+    // the RIGHT edge. Labels used to sit at the left edge, forcing a glance
+    // all the way across the graph to read off what swar the note you're
+    // singing right now actually is - right-aligning them next to the
+    // right edge puts the reference label right where the eye already is.
+    constexpr float kLabelWidth = 30.0f;
+    constexpr float kLabelInset = 6.0f;
 
     // Cents axis: fixed +/-1400 cent range, clamped and never auto-rescaling.
     // This graph is a MELODIC CONTOUR view - the shape of pitch movement
@@ -113,17 +122,32 @@ void PitchGraphComponent::paint (juce::Graphics& g)
 
         const int semitoneIndex = ((cents / 100) % 12 + 12) % 12;
         const float y = centsToY ((float) cents);
-        g.drawText (swarToString ((Swar) semitoneIndex), bounds.getX() + 4.0f, y - 7.0f, 24.0f, 14.0f,
-                    juce::Justification::centredLeft);
+        g.drawText (swarToString ((Swar) semitoneIndex), bounds.getRight() - kLabelInset - kLabelWidth, y - 9.0f,
+                    kLabelWidth, 18.0f, juce::Justification::centredRight);
     }
 
-    // The Sa line itself - gold, the design system's reference-line accent.
-    g.setColour (RiyaazColours::gold.withAlpha (0.6f));
-    g.drawHorizontalLine ((int) bounds.getCentreY(), bounds.getX(), bounds.getRight());
+    // The Sa line(s) - gold, the design system's reference-line accent - drawn
+    // at every octave inside the visible +/-1400c range: Mandra (-1200),
+    // Madhya (0, the calibrated Sa itself) and Taar (+1200, the peak note of
+    // every alankar pattern - see the kCentsRange comment above). Madhya gets
+    // the full-weight line since it's the actual reference pitch; the octave
+    // lines are drawn dimmer so they read as secondary landmarks rather than
+    // competing with it.
+    for (const int saCents : { -1200, 0, 1200 })
+    {
+        const float y = centsToY ((float) saCents);
+        g.setColour (RiyaazColours::gold.withAlpha (saCents == 0 ? 0.6f : 0.35f));
+        g.drawHorizontalLine ((int) y, bounds.getX(), bounds.getRight());
+    }
+
     g.setColour (RiyaazColours::gold);
     g.setFont (labelFont);
-    g.drawText (swarToString (Swar::Sa), bounds.getX() + 4.0f, bounds.getCentreY() - 7.0f, 24.0f, 14.0f,
-                juce::Justification::centredLeft);
+    for (const int saCents : { -1200, 0, 1200 })
+    {
+        const float y = centsToY ((float) saCents);
+        g.drawText (swarToString (Swar::Sa), bounds.getRight() - kLabelInset - kLabelWidth, y - 9.0f,
+                    kLabelWidth, 18.0f, juce::Justification::centredRight);
+    }
 
     // Alankar practice mode's live target-note band, drawn after the
     // gridlines/Sa line but before the trace, so the trace is always

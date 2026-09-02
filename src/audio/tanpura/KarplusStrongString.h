@@ -19,20 +19,21 @@ private:
     static constexpr float kMinFrequencyHz = 20.0f; // Guard against division-by-zero
     static constexpr float kDamping = 0.996f;
 
-    // Hard upper bound on how long a single pluck is allowed to ring, as a
-    // DURATION (converted to samples at pluck time from the actual sample
-    // rate). It must not be a raw sample count: baking 44100 into a constant
-    // silently shrinks the window in real time as the device rate rises
-    // (a 44100*4 count is only 1.84s at 96kHz).
-    //
-    // Be honest about what this cutoff is: it is NOT a formality that fires
-    // after the string has already gone quiet. Measured t60 for these strings
-    // is roughly 8s (madhya Sa) to 16s (mandra Sa) - substantially LONGER than
-    // this 4s window - so the string is still audible when it is cut, and the
-    // cut is a step discontinuity (a faint click). Ending the ring on a
-    // measured amplitude/RMS floor instead of a fixed duration is the proper
-    // fix and is deferred to TODOS.md.
-    static constexpr float kMaxRingSeconds = 4.0f;
+    // Silence floor an amplitude ENVELOPE FOLLOWER (see envelope below) must
+    // decay past before the ring is allowed to end - not a fixed duration.
+    // Measured amplitude at the old fixed 4s cutoff was 0.043-0.100 for the
+    // lower strings (i.e. still clearly audible, ending in an audible click);
+    // this floor is far below that, so the ring now ends at true silence
+    // instead of on an arbitrary clock. kMinRingSeconds guards against ending
+    // early during the noise burst's own natural low-energy moments, before
+    // the envelope follower has had time to settle onto the real decay curve.
+    static constexpr float kSilenceFloor = 0.02f;
+    static constexpr float kMinRingSeconds = 0.3f;
+
+    // Hard upper bound, kept as a safety net (not the primary end-of-ring
+    // mechanism any more - see kSilenceFloor above) in case damping is ever
+    // configured such that the envelope never crosses the floor.
+    static constexpr float kMaxRingSeconds = 20.0f;
 
     // Upper bound on delay-line length (sampleRate / frequencyHz), DERIVED
     // from the two things that actually determine it rather than guessed:
@@ -44,9 +45,36 @@ private:
     static constexpr double kMaxSupportedSampleRate = 192000.0;
     static constexpr size_t kMaxDelayLineLength = (size_t) (kMaxSupportedSampleRate / kMinFrequencyHz) + 1;
 
+    // Owned instance rather than juce::Random::getSystemRandom(): the noise
+    // burst is generated on the audio thread inside pluck(), and the shared
+    // system instance is not documented lock-free, while a per-string
+    // instance's next() calls definitely are.
+    juce::Random random;
+
     std::vector<float> delayLine;
     size_t readPos = 0;
     int samplesSincePluck = 0;
+    int minRingSamples = 0; // computed in pluck() from the real sample rate
     int maxRingSamples = 0; // computed in pluck() from the real sample rate
     bool ringing = false;
+
+    // One-pole envelope follower of |output|, used to end the ring on
+    // measured silence (see kSilenceFloor) instead of a fixed duration.
+    float envelope = 0.0f;
+
+    // Fractional-delay tuning allpass ("C filter" in Jaffe & Smith's Extended
+    // Karplus-Strong): the circular buffer above can only hold an INTEGER
+    // number of samples, so on its own the string always resonates at
+    // sampleRate/N for whatever integer N was chosen - up to +-8 cents off
+    // the requested pitch after the +0.5 rounding correction in pluck() (see
+    // the comment there, and TODOS.md). This one-sample all-pass filter adds
+    // the missing fractional part of the delay so the total loop delay
+    // (buffer + averaging filter + this) equals sampleRate/frequency exactly,
+    // removing the residual error rather than just halving it. The tanpura
+    // is the app's own tuning reference and the UI grades the user's cents
+    // deviation against it, so an out-of-tune drone would have the app
+    // disagreeing with itself.
+    float allpassCoeff = 0.0f;
+    float allpassPrevInput = 0.0f;
+    float allpassPrevOutput = 0.0f;
 };

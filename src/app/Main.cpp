@@ -45,6 +45,24 @@ private:
         {
             setUsingNativeTitleBar (true);
 
+            showPicker();
+
+            centreWithSize (getWidth(), getHeight());
+            setVisible (true);
+        }
+
+        void closeButtonPressed() override
+        {
+            juce::JUCEApplication::getInstance()->systemRequestedQuit();
+        }
+
+    private:
+        // Swaps the window's content to a fresh ProfilePickerComponent and
+        // wires its resolution back to a MainComponent - shared by initial
+        // startup and by MainComponent's Home button (see onRequestHome
+        // below), so the two paths can't drift apart.
+        void showPicker()
+        {
             auto* picker = new ProfilePickerComponent (profileStore);
             picker->onResolved = [this] (juce::String profileName, std::optional<float> knownSaHz)
             {
@@ -66,22 +84,21 @@ private:
                 // pending message together with everything else.
                 juce::MessageManager::callAsync ([this, profileName, knownSaHz]
                 {
-                    setContentOwned (new MainComponent (profileName, knownSaHz), true);
+                    auto* mainComponent = new MainComponent (profileName, knownSaHz);
+                    // Same ownership reasoning as picker->onResolved just
+                    // above applies here in reverse: MainWindow outlives
+                    // mainComponent deterministically, so a plain [this]
+                    // capture is safe, and MainComponent's own onClick
+                    // already defers the call into this lambda via
+                    // callAsync - see its declaration in MainComponent.h.
+                    mainComponent->onRequestHome = [this] { showPicker(); };
+                    setContentOwned (mainComponent, true);
                     centreWithSize (getWidth(), getHeight());
                 });
             };
             setContentOwned (picker, true);
-
-            centreWithSize (getWidth(), getHeight());
-            setVisible (true);
         }
 
-        void closeButtonPressed() override
-        {
-            juce::JUCEApplication::getInstance()->systemRequestedQuit();
-        }
-
-    private:
         ProfileStore profileStore;
     };
 

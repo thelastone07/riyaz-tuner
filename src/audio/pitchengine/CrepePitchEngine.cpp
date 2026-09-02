@@ -43,9 +43,18 @@ PitchEngineStatus CrepePitchEngine::prepare (double inputSampleRate)
         Ort::SessionOptions sessionOptions;
         sessionOptions.SetIntraOpNumThreads (1);
 
+        // Ort::Session's path parameter is ORTCHAR_T, which ONNX Runtime
+        // itself typedefs to wchar_t on Windows and char everywhere else -
+        // toWideCharPointer() alone would not link (wrong type) on
+        // macOS/Linux, since Ort::Session has no wchar_t overload there.
         const auto pathString = modelFile.getFullPathName();
+#if defined (_WIN32)
         session = std::make_unique<Ort::Session> (
             *env, pathString.toWideCharPointer(), sessionOptions);
+#else
+        session = std::make_unique<Ort::Session> (
+            *env, pathString.toRawUTF8(), sessionOptions);
+#endif
 
         status = PitchEngineStatus::Ok;
     }

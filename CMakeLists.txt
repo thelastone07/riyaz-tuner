@@ -6,17 +6,59 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(JUCE CONFIG REQUIRED)
 
-set(ONNXRUNTIME_ROOT "${CMAKE_SOURCE_DIR}/third_party/onnxruntime-win-x64-1.23.2")
+# ONNX Runtime is vendored as a prebuilt release under third_party/ (see
+# scripts/fetch-onnxruntime.sh, which downloads the right one for the host
+# platform) rather than built from source - see TODOS.md's "ONNX Runtime
+# dependency" note for why (an unresolved upstream MASM bug blocks building
+# it via vcpkg on Windows; the same vendor-a-release approach is simplest to
+# keep identical across platforms rather than building from source on some
+# and vendoring on others). Each platform branch below picks the matching
+# third_party/ subdirectory and the runtime file's platform-specific name.
+if (WIN32)
+    set(ONNXRUNTIME_DIR_NAME "onnxruntime-win-x64-1.23.2")
+    set(ONNXRUNTIME_LINK_LIB "onnxruntime.lib")   # import lib - link against this
+    set(ONNXRUNTIME_RUNTIME_FILE "onnxruntime.dll") # actual runtime - must sit next to the .exe
+elseif (APPLE)
+    set(ONNXRUNTIME_DIR_NAME "onnxruntime-osx-universal2-1.23.2") # one build for both Intel and Apple Silicon
+    set(ONNXRUNTIME_LINK_LIB "libonnxruntime.dylib")
+    set(ONNXRUNTIME_RUNTIME_FILE "libonnxruntime.dylib")
+elseif (UNIX)
+    set(ONNXRUNTIME_DIR_NAME "onnxruntime-linux-x64-1.23.2")
+    set(ONNXRUNTIME_LINK_LIB "libonnxruntime.so")
+    set(ONNXRUNTIME_RUNTIME_FILE "libonnxruntime.so")
+else()
+    message(FATAL_ERROR "riyaaz: no ONNX Runtime vendoring rule for this platform - add one above (and to scripts/fetch-onnxruntime.sh)")
+endif()
 
-# Copies onnxruntime.dll next to a target's built executable. Call once per
-# executable target that transitively links riyaaz_pitchengine (it will not
-# launch without this - onnxruntime.dll must be discoverable at runtime).
+set(ONNXRUNTIME_ROOT "${CMAKE_SOURCE_DIR}/third_party/${ONNXRUNTIME_DIR_NAME}")
+
+if (NOT EXISTS "${ONNXRUNTIME_ROOT}/lib/${ONNXRUNTIME_LINK_LIB}")
+    message(FATAL_ERROR
+        "riyaaz: ONNX Runtime not found at ${ONNXRUNTIME_ROOT}. "
+        "Run scripts/fetch-onnxruntime.sh first (bash - Git Bash/WSL on Windows, or a plain shell on macOS/Linux).")
+endif()
+
+# Copies the ONNX Runtime shared library next to a target's built executable
+# (on macOS, that's Riyaaz.app/Contents/MacOS/ - CMake's TARGET_FILE_DIR
+# generator expression resolves inside the bundle automatically). Call once
+# per executable target that transitively links riyaaz_pitchengine (it will
+# not launch without this - the shared library must be discoverable at
+# runtime).
 function(riyaaz_copy_onnxruntime_dll target)
     add_custom_command(TARGET ${target} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${ONNXRUNTIME_ROOT}/lib/onnxruntime.dll"
+            "${ONNXRUNTIME_ROOT}/lib/${ONNXRUNTIME_RUNTIME_FILE}"
             "$<TARGET_FILE_DIR:${target}>"
     )
+    if (APPLE)
+        # macOS has no equivalent of Windows' "next to the .exe is enough" -
+        # a copied-in dylib is only found at load time if the executable's
+        # own rpath says to look next to itself. Without this, the app
+        # links fine but fails to LAUNCH (dyld: Library not loaded).
+        set_target_properties(${target} PROPERTIES
+            BUILD_WITH_INSTALL_RPATH TRUE
+            INSTALL_RPATH "@executable_path")
+    endif()
 endfunction()
 
 add_library(riyaaz_swarmap STATIC
@@ -36,7 +78,7 @@ add_library(riyaaz_pitchengine STATIC
 target_include_directories(riyaaz_pitchengine PUBLIC src)
 target_include_directories(riyaaz_pitchengine PUBLIC "${ONNXRUNTIME_ROOT}/include")
 target_link_libraries(riyaaz_pitchengine PUBLIC juce::juce_core juce::juce_dsp)
-target_link_libraries(riyaaz_pitchengine PUBLIC "${ONNXRUNTIME_ROOT}/lib/onnxruntime.lib")
+target_link_libraries(riyaaz_pitchengine PUBLIC "${ONNXRUNTIME_ROOT}/lib/${ONNXRUNTIME_LINK_LIB}")
 target_compile_definitions(riyaaz_pitchengine PUBLIC
     JUCE_STANDALONE_APPLICATION=1
 )
@@ -162,7 +204,20 @@ target_link_libraries(riyaaz_tests PRIVATE
 )
 riyaaz_copy_onnxruntime_dll(riyaaz_tests)
 
-juce_add_gui_app(riyaaz_app PRODUCT_NAME "Riyaaz")
+# macOS requires an explicit Info.plist entitlement (with a user-facing
+# reason string) before it will even show the mic-access permission prompt -
+# without this the app would silently get empty/no input, with no dialog to
+# explain why. JUCE's CMake API bakes this into the generated Info.plist via
+# these two keywords, recognized only on Apple platforms; harmless to omit
+# elsewhere, so this list is just left empty (and therefore a no-op) there.
+set(RIYAAZ_MIC_PERMISSION_ARGS "")
+if (APPLE)
+    set(RIYAAZ_MIC_PERMISSION_ARGS
+        MICROPHONE_PERMISSION_ENABLED TRUE
+        MICROPHONE_PERMISSION_TEXT "Riyaaz needs microphone access to track your singing pitch.")
+endif()
+
+juce_add_gui_app(riyaaz_app PRODUCT_NAME "Riyaaz" ${RIYAAZ_MIC_PERMISSION_ARGS})
 target_sources(riyaaz_app PRIVATE
     src/app/MainComponent.cpp
     src/app/Main.cpp

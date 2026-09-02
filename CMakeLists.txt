@@ -61,6 +61,23 @@ function(riyaaz_copy_onnxruntime_dll target)
     endif()
 endfunction()
 
+# Copies the CREPE pitch model next to a target's built executable, mirroring
+# riyaaz_copy_onnxruntime_dll above - CrepePitchEngine's default model path is
+# resolved relative to the executable's own directory (see
+# MainComponent::resolveCrepeModelPath()), which only works if the model
+# actually lives there. Without this, the app only finds the model when its
+# working directory happens to be the repo root (e.g. launched from a
+# terminal at the repo root) - a desktop shortcut has no such guarantee.
+function(riyaaz_copy_crepe_model target)
+    add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "$<TARGET_FILE_DIR:${target}>/models/crepe"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_SOURCE_DIR}/models/crepe/small.onnx"
+            "$<TARGET_FILE_DIR:${target}>/models/crepe/small.onnx"
+    )
+endfunction()
+
 add_library(riyaaz_swarmap STATIC
     src/audio/swarmap/SwarMapper.cpp
 )
@@ -203,6 +220,7 @@ target_link_libraries(riyaaz_tests PRIVATE
     juce::juce_gui_basics
 )
 riyaaz_copy_onnxruntime_dll(riyaaz_tests)
+riyaaz_copy_crepe_model(riyaaz_tests)
 
 # macOS requires an explicit Info.plist entitlement (with a user-facing
 # reason string) before it will even show the mic-access permission prompt -
@@ -246,3 +264,4 @@ target_link_libraries(riyaaz_app PRIVATE
     juce::juce_gui_extra
 )
 riyaaz_copy_onnxruntime_dll(riyaaz_app)
+riyaaz_copy_crepe_model(riyaaz_app)

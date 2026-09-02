@@ -15,6 +15,30 @@ namespace
     };
 }
 
+juce::String MainComponent::resolveCrepeModelPath()
+{
+    constexpr auto kRelativePath = "models/crepe/small.onnx";
+
+    const auto exeDir = juce::File::getSpecialLocation (juce::File::currentExecutableFile).getParentDirectory();
+    const auto installedCandidate = exeDir.getChildFile (kRelativePath);
+    if (installedCandidate.existsAsFile())
+        return installedCandidate.getFullPathName();
+
+    // Dev fallback: walk up from the working directory looking for the repo's
+    // models/ folder, in case the exe was run before a build copied it in.
+    for (auto dir = juce::File::getCurrentWorkingDirectory(); dir.exists(); dir = dir.getParentDirectory())
+    {
+        const auto candidate = dir.getChildFile (kRelativePath);
+        if (candidate.existsAsFile())
+            return candidate.getFullPathName();
+
+        if (dir.getParentDirectory() == dir) // reached the filesystem root
+            break;
+    }
+
+    return juce::String (kRelativePath); // let CrepePitchEngine::prepare() report LoadError as before
+}
+
 void MainComponent::setAlankarPracticeControlsLocked (bool locked)
 {
     // See the declaration in MainComponent.h for why each of these three is

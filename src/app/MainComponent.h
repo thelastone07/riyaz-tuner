@@ -79,12 +79,20 @@ private:
     // tanpuraToggleButton's own two glyphs.
     void updateTanpuraToggleButtonText();
 
+    // Resolves the CREPE model path relative to the running executable (where
+    // riyaaz_copy_crepe_model() in CMakeLists.txt places it) rather than the
+    // process's current working directory, which a desktop shortcut has no
+    // guarantee points at the repo root. Falls back to walking up from the
+    // working directory, for the dev workflow of running the freshly-built
+    // exe directly from a terminal at the repo root or a build/ subdirectory.
+    static juce::String resolveCrepeModelPath();
+
     juce::String activeProfileName;
     std::optional<float> pendingKnownSaHz;
     ProfileStore profileStore { getStandardProfileStoreFile() };
     SessionStore sessionStore { getStandardSessionStoreFile() };
 
-    CrepePitchEngine engine { juce::String ("models/crepe/small.onnx") };
+    CrepePitchEngine engine { resolveCrepeModelPath() };
     std::unique_ptr<PitchPipeline> pipeline;   // constructed in prepareToPlay(), once the real sample rate is known
     std::unique_ptr<PitchWorker> worker;       // ditto
 

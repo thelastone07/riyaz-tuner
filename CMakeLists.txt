@@ -235,7 +235,9 @@ if (APPLE)
         MICROPHONE_PERMISSION_TEXT "Riyaaz needs microphone access to track your singing pitch.")
 endif()
 
-juce_add_gui_app(riyaaz_app PRODUCT_NAME "Riyaaz" ${RIYAAZ_MIC_PERMISSION_ARGS})
+juce_add_gui_app(riyaaz_app PRODUCT_NAME "Riyaaz"
+    ICON_BIG "${CMAKE_SOURCE_DIR}/assets/icon.png"
+    ${RIYAAZ_MIC_PERMISSION_ARGS})
 target_sources(riyaaz_app PRIVATE
     src/app/MainComponent.cpp
     src/app/Main.cpp

@@ -3,6 +3,10 @@
 #include "../ui/RiyaazLookAndFeel.h"
 #include <iterator>
 
+#if JUCE_MAC
+#include <CoreAudio/CoreAudio.h>
+#endif
+
 namespace
 {
     // Shared between the constructor (building the combo's items) and
@@ -47,6 +51,148 @@ namespace
         const auto available = probe->getOutputChannelNames().size();
         return available > 0 ? juce::jmin (fallback, available) : fallback;
     }
+
+#if JUCE_MAC
+    // detectPreferredOutputChannels() above handles ONE trigger of JUCE's
+    // CoreAudio AudioIODeviceCombiner (mono-forced-to-stereo), but the
+    // combiner has a second, independent trigger: it's engaged whenever the
+    // default input and output resolve to different underlying CoreAudio
+    // device objects, which is true for essentially every Bluetooth
+    // accessory (macOS exposes a single BT headset as two separate device
+    // objects, one per direction, both sharing its display name). Confirmed
+    // via AddressSanitizer that this device's actual per-callback buffer
+    // size doesn't always match what JUCE allocated for, causing a
+    // heap-buffer-overflow in CoreAudioInternal::audioCallback() on every
+    // callback - the corruption then gets detected later, at some unrelated
+    // allocation, making it look like a random UI crash. Built-in hardware
+    // reliably honours the requested buffer size, so combining built-in
+    // mic + speakers (the everyday case for any JUCE app) doesn't hit this.
+    // Below: detect a non-built-in default and steer back to built-in
+    // devices rather than trying to avoid the combiner altogether.
+    juce::String getCoreAudioDeviceName (AudioDeviceID deviceID)
+    {
+        AudioObjectPropertyAddress pa { kAudioDevicePropertyDeviceNameCFString,
+                                        kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain };
+        CFStringRef name = nullptr;
+        UInt32 size = sizeof (name);
+
+        if (AudioObjectGetPropertyData (deviceID, &pa, 0, nullptr, &size, &name) != noErr || name == nullptr)
+            return {};
+
+        const juce::String result (juce::String::fromCFString (name));
+        CFRelease (name);
+        return result;
+    }
+
+    bool isBuiltInCoreAudioDevice (AudioDeviceID deviceID)
+    {
+        if (deviceID == kAudioObjectUnknown)
+            return false;
+
+        AudioObjectPropertyAddress pa { kAudioDevicePropertyTransportType,
+                                        kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain };
+        UInt32 transportType = 0;
+        UInt32 size = sizeof (transportType);
+
+        return AudioObjectGetPropertyData (deviceID, &pa, 0, nullptr, &size, &transportType) == noErr
+               && transportType == kAudioDeviceTransportTypeBuiltIn;
+    }
+
+    AudioDeviceID getDefaultCoreAudioDevice (bool forInput)
+    {
+        AudioObjectPropertyAddress pa { forInput ? kAudioHardwarePropertyDefaultInputDevice
+                                                 : kAudioHardwarePropertyDefaultOutputDevice,
+                                        kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain };
+        AudioDeviceID deviceID = kAudioObjectUnknown;
+        UInt32 size = sizeof (deviceID);
+
+        return AudioObjectGetPropertyData (kAudioObjectSystemObject, &pa, 0, nullptr, &size, &deviceID) == noErr
+               ? deviceID : kAudioObjectUnknown;
+    }
+
+    bool defaultAudioDeviceRisksCombinerOverflow()
+    {
+        return ! isBuiltInCoreAudioDevice (getDefaultCoreAudioDevice (true))
+               || ! isBuiltInCoreAudioDevice (getDefaultCoreAudioDevice (false));
+    }
+
+    // Scans every device on the system (not just the default) for the
+    // built-in one that has channels in the requested direction.
+    juce::String findBuiltInCoreAudioDeviceName (bool forInput)
+    {
+        AudioObjectPropertyAddress devicesAddr { kAudioHardwarePropertyDevices,
+                                                 kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain };
+        UInt32 dataSize = 0;
+
+        if (AudioObjectGetPropertyDataSize (kAudioObjectSystemObject, &devicesAddr, 0, nullptr, &dataSize) != noErr
+            || dataSize == 0)
+            return {};
+
+        std::vector<AudioDeviceID> devices (dataSize / sizeof (AudioDeviceID));
+
+        if (AudioObjectGetPropertyData (kAudioObjectSystemObject, &devicesAddr, 0, nullptr, &dataSize, devices.data()) != noErr)
+            return {};
+
+        for (auto deviceID : devices)
+        {
+            if (! isBuiltInCoreAudioDevice (deviceID))
+                continue;
+
+            AudioObjectPropertyAddress streamAddr { kAudioDevicePropertyStreamConfiguration,
+                                                     forInput ? kAudioObjectPropertyScopeInput : kAudioObjectPropertyScopeOutput,
+                                                     kAudioObjectPropertyElementMain };
+            UInt32 streamSize = 0;
+
+            if (AudioObjectGetPropertyDataSize (deviceID, &streamAddr, 0, nullptr, &streamSize) != noErr || streamSize == 0)
+                continue;
+
+            std::vector<char> buffer (streamSize);
+            auto* bufferList = reinterpret_cast<AudioBufferList*> (buffer.data());
+
+            if (AudioObjectGetPropertyData (deviceID, &streamAddr, 0, nullptr, &streamSize, bufferList) != noErr)
+                continue;
+
+            UInt32 channels = 0;
+            for (UInt32 i = 0; i < bufferList->mNumberBuffers; ++i)
+                channels += bufferList->mBuffers[i].mNumberChannels;
+
+            if (channels == 0)
+                continue;
+
+            if (auto name = getCoreAudioDeviceName (deviceID); name.isNotEmpty())
+                return name;
+        }
+
+        return {};
+    }
+
+    std::optional<juce::AudioDeviceManager::AudioDeviceSetup> findBuiltInAudioSetup (juce::AudioDeviceManager& deviceManager)
+    {
+        const auto inputName = findBuiltInCoreAudioDeviceName (true);
+        const auto outputName = findBuiltInCoreAudioDeviceName (false);
+
+        if (inputName.isEmpty() || outputName.isEmpty())
+            return std::nullopt;
+
+        auto& deviceTypes = deviceManager.getAvailableDeviceTypes();
+        auto* deviceType = deviceTypes.getFirst();
+
+        if (deviceType == nullptr)
+            return std::nullopt;
+
+        std::unique_ptr<juce::AudioIODevice> probe (deviceType->createDevice (outputName, {}));
+        const auto outputChannels = probe != nullptr ? juce::jmax (1, juce::jmin (2, probe->getOutputChannelNames().size())) : 2;
+
+        juce::AudioDeviceManager::AudioDeviceSetup setup;
+        setup.inputDeviceName = inputName;
+        setup.outputDeviceName = outputName;
+        setup.useDefaultInputChannels = false;
+        setup.useDefaultOutputChannels = false;
+        setup.inputChannels.setRange (0, 1, true);
+        setup.outputChannels.setRange (0, outputChannels, true);
+        return setup;
+    }
+#endif
 }
 
 juce::String MainComponent::resolveCrepeModelPath()
@@ -468,6 +614,18 @@ MainComponent::MainComponent (const juce::String& profileNameIn, std::optional<f
     // of operations there safety-critical. Output channel count is detected
     // rather than hardcoded to 2 - see detectPreferredOutputChannels() above.
     setAudioChannels (1, detectPreferredOutputChannels (deviceManager));
+
+#if JUCE_MAC
+    // See defaultAudioDeviceRisksCombinerOverflow()'s comment above for why:
+    // switch off a risky (non-built-in) default onto the Mac's actual
+    // built-in mic/speakers, which don't trigger the combiner overflow.
+    // Silently keeps the just-opened default device if no built-in device
+    // is found (e.g. a Mac Pro with no built-in audio) - better a device
+    // that's merely at risk than none at all.
+    if (defaultAudioDeviceRisksCombinerOverflow())
+        if (auto builtInSetup = findBuiltInAudioSetup (deviceManager))
+            deviceManager.setAudioDeviceSetup (*builtInSetup, true);
+#endif
 
     // setAudioChannels() opens the device synchronously (and, on success, has
     // already called prepareToPlay() by the time it returns). If no device
